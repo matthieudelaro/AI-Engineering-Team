@@ -1,8 +1,7 @@
 # Testing strategy
 
-Test-driven by default: write the test first, watch it fail, make it pass, then
-refactor. This is the shipped default; the welcome wizard confirms how strict you
-want to be and adjusts this file on first run.
+Strict test-driven development: write the test first, watch it fail, make it pass,
+then refactor.
 
 ## The TDD loop
 1. **Red** — write a failing test that states the behaviour you want.
@@ -11,7 +10,7 @@ want to be and adjusts this file on first run.
 
 ## What to test
 - Unit tests for logic, at the layer that owns it.
-- A few integration tests across boundaries (API, DB, UI ↔ service).
+- A few integration tests across boundaries (API, DB, UI ↔ service, LLM mocks).
 - Test behaviour, not implementation detail — a test should survive a refactor.
 
 ## The bar

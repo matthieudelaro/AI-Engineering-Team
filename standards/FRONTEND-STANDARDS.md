@@ -1,21 +1,24 @@
-# Frontend standards (JavaScript / TypeScript)
+# Frontend standards (TypeScript)
 
-The shipped default is TypeScript. If the welcome wizard hears a different frontend
-language or framework, it rewrites this file for that choice on first run; the
-structure below stays the same.
+UI, client-side logic, and agent-facing surfaces — all in TypeScript.
 
 ## Language
-- TypeScript by default, `strict` on. Avoid `any` — model the types.
+- TypeScript with `strict` enabled. No `any`, no unsafe casts — model the types.
 - Modern ES modules; `const` / `let`, never `var`.
 - Small components and pure functions; keep state local until it must be shared.
 
 ## Style
-- Format with Prettier, lint with ESLint. CI fails on lint errors.
+- Format with Prettier, lint with ESLint (`@typescript-eslint/no-explicit-any` on).
+  CI fails on lint errors.
 - Names say what they are; no abbreviations that need a decoder.
 
+## LLM and prompting
+- Prompts shown in the UI are still code — type their inputs, outputs, and states.
+- Surface model errors clearly to the user; never expose raw API responses or keys.
+- Streaming responses need typed event shapes and clean cancellation.
+
 ## Testing (TDD — see `TESTING-STRATEGY.md`)
-- Component and unit tests with the team's runner (e.g. Vitest or Jest + Testing
-  Library).
+- Component and unit tests with Vitest or Jest + Testing Library.
 - Test what the user sees and does, not internal wiring.
 - Accessibility is part of done: semantic HTML, keyboard reachable, labelled controls.
 

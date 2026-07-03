@@ -2,11 +2,6 @@
 
 The startup routine. Read this first, on every session.
 
-## First run: the welcome wizard
-On the first session, if `playbooks/000-welcome-wizard.md` exists and the name in
-`context/PROFILE.md` is not set yet, run that playbook before anything else. It
-onboards you, then deletes itself, so this happens only once.
-
 ## Load on every session
 1. `context/GOLDEN-RULES.md`: the constitution. Read it first; it overrides
    everything here.
@@ -53,12 +48,10 @@ they ship.
 
 ## Engineering standards
 Coding and testing standards live in `standards/`, loaded on demand (see
-`context/INDEX.md`). The Backend engineer builds to `standards/BACKEND-STANDARDS.md`
-(Python by default), the Frontend engineer to `standards/FRONTEND-STANDARDS.md`
-(TypeScript/JavaScript by default), and both work test-first per
-`standards/TESTING-STRATEGY.md`. Everyone follows `standards/GIT-WORKFLOW.md` for
-branching, commits, and pull requests. The welcome wizard tunes the language and
-testing standards to your stack and your TDD preference on first run. Load the
+`context/INDEX.md`). The Backend engineer builds to `standards/BACKEND-STANDARDS.md`,
+the Frontend engineer to `standards/FRONTEND-STANDARDS.md` (both TypeScript), and
+both work test-first per `standards/TESTING-STRATEGY.md`. Everyone follows
+`standards/GIT-WORKFLOW.md` for branching, commits, and pull requests. Load the
 relevant standard before a task in that domain.
 
 ## Connectors
