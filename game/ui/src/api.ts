@@ -1,5 +1,5 @@
 import { logApiCall } from "./apiConsole.js";
-import { GATEWAY_BASE_URL } from "./config.js";
+import { GATEWAY_BASE_URL, GAME_ID } from "./config.js";
 import { parseRateLimitHeaders, type RateBudget } from "./rateBudget.js";
 import type {
   ActionResponse,
@@ -159,6 +159,10 @@ async function postGameAction<T>(path: string, init?: RequestInit): Promise<T> {
     body,
   });
   return body as T;
+}
+
+export function mapStreamUrl(): string {
+  return `${GATEWAY_BASE_URL}/api/v1/games/${GAME_ID}/map/stream`;
 }
 
 export function fetchMap(): Promise<{ data: MapResponse; meta: CachedReadMeta }> {

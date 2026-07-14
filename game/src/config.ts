@@ -46,6 +46,7 @@ const stateEndpointSchema = z.object({
   key: z.string().min(1),
   method: z.enum(["GET", "POST"]),
   path: z.string().min(1),
+  streamPath: z.string().min(1).optional(),
   pollIntervalMs: z.number().int().positive().optional(),
   maxPerSec: z.number().positive().optional(),
   limitKey: z.string().min(1).optional(),
@@ -101,6 +102,9 @@ export function loadApiEndpointsConfig(env: Env): ApiEndpointsConfig {
     stateEndpoints: config.stateEndpoints.map((endpoint) => ({
       ...endpoint,
       path: interpolateEnv(endpoint.path, env),
+      streamPath: endpoint.streamPath
+        ? interpolateEnv(endpoint.streamPath, env)
+        : undefined,
     })),
   };
 }

@@ -13,6 +13,7 @@
       "key": "map",
       "method": "GET",
       "path": "/api/v1/map?game_id=${GAME_ID}",
+      "streamPath": "/api/v1/games/${GAME_ID}/map/stream",
       "limitKey": "get_map",
       "pollIntervalMs": 5000
     },

@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance } from "fastify";
+import { Readable } from "node:stream";
 import { sql } from "drizzle-orm";
 import type { Env } from "../config.js";
 import type { ApiEndpointsConfig } from "../config.js";
@@ -18,6 +19,19 @@ export interface GatewayServer {
   pool: ReturnType<typeof createDb>["pool"];
   db: Database;
   stats: GatewayStats;
+}
+
+function shouldForwardResponseHeader(headerName: string): boolean {
+  const lower = headerName.toLowerCase();
+  return (
+    lower.startsWith("x-ratelimit-") ||
+    lower === "content-type" ||
+    lower === "cache-control"
+  );
+}
+
+function isEventStream(contentType: string | null): boolean {
+  return (contentType ?? "").includes("text/event-stream");
 }
 
 function buildUpstreamUrl(base: string, path: string, query: string): string {
@@ -157,6 +171,11 @@ export async function createGatewayServer(
       upstreamHeaders["content-type"] = contentType;
     }
 
+    const acceptHeader = request.headers.accept;
+    if (typeof acceptHeader === "string") {
+      upstreamHeaders.accept = acceptHeader;
+    }
+
     const upstreamUrl = buildUpstreamUrl(
       endpointsConfig.upstreamBaseUrl,
       path,
@@ -178,6 +197,39 @@ export async function createGatewayServer(
       });
 
       responseStatus = upstreamResponse.status;
+
+      const upstreamContentType = upstreamResponse.headers.get("content-type");
+      if (
+        isEventStream(upstreamContentType) &&
+        upstreamResponse.ok &&
+        upstreamResponse.body
+      ) {
+        stats.totalCalls += 1;
+        await db.insert(apiCalls).values({
+          method: request.method,
+          path,
+          query: query || null,
+          requestHeadersRedacted: redactHeaders(
+            request.headers as Record<string, string | string[] | undefined>,
+          ),
+          requestBody: truncateBody(requestBody, env.GATEWAY_MAX_BODY_BYTES),
+          responseStatus,
+          responseBody: truncateBody("[sse stream]", env.GATEWAY_MAX_BODY_BYTES),
+          latencyMs: Date.now() - started,
+          policyId: typeof policyId === "string" ? policyId : null,
+          runId: Number.isFinite(runId) ? runId : null,
+          source: typeof source === "string" ? source : "gateway",
+        });
+
+        reply.status(responseStatus);
+        for (const [headerName, headerValue] of upstreamResponse.headers.entries()) {
+          if (shouldForwardResponseHeader(headerName)) {
+            reply.header(headerName, headerValue);
+          }
+        }
+        return reply.send(Readable.fromWeb(upstreamResponse.body));
+      }
+
       responseBody = await upstreamResponse.text();
       stats.totalCalls += 1;
       if (responseStatus >= 500) {
@@ -202,8 +254,7 @@ export async function createGatewayServer(
 
       reply.status(responseStatus);
       for (const [headerName, headerValue] of upstreamResponse.headers.entries()) {
-        const lower = headerName.toLowerCase();
-        if (lower.startsWith("x-ratelimit-") || lower === "content-type") {
+        if (shouldForwardResponseHeader(headerName)) {
           reply.header(headerName, headerValue);
         }
       }

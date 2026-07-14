@@ -11,6 +11,7 @@ import {
   type MethodLimitsResponse,
 } from "./methodLimits.js";
 import { TokenBucketRateLimiter } from "./rateLimiter.js";
+import { startMapStream } from "./mapStream.js";
 
 export interface PollerHandle {
   stop: () => void;
@@ -151,6 +152,17 @@ export async function startPollers(
   const handles: PollerHandle[] = [];
 
   for (const endpoint of endpointsConfig.stateEndpoints) {
+    if (endpoint.streamPath) {
+      const streamHandle = await startMapStream(
+        env,
+        db,
+        endpoint.path,
+        endpoint.streamPath,
+      );
+      handles.push(streamHandle);
+      continue;
+    }
+
     const maxPerSec = maxPerSecForEndpoint(
       methodLimits,
       endpoint.key,
