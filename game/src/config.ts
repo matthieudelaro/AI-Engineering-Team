@@ -11,7 +11,7 @@ loadEnv({ path: resolve(repoRoot, ".env") });
 
 const envSchema = z.object({
   PLAYER_ID: z.string().min(1).default("094gdi"),
-  GAME_ID: z.string().min(1).default("7zav"),
+  GAME_ID: z.string().min(1).default("8sac"),
   GAME_API_URL: z.string().url(),
   GAME_API_TOKEN: z.string().default("your-token-here"),
   GAME_API_AUTH_HEADER: z.string().default("Authorization"),
@@ -23,6 +23,7 @@ const envSchema = z.object({
   POLL_MAX_RPS: z.coerce.number().positive().default(2),
   GATEWAY_MAX_BODY_BYTES: z.coerce.number().int().positive().default(65536),
   POLICY_TICK_INTERVAL_MS: z.coerce.number().int().positive().default(1000),
+  UI_CLAIM_PRIORITY_MS: z.coerce.number().int().positive().default(1000),
   DRY_RUN: z
     .enum(["true", "false"])
     .default("false")
@@ -36,8 +37,8 @@ export function loadEnvConfig(): Env {
 }
 
 const zoneSchema = z.object({
-  x: z.number().int().nonnegative(),
-  y: z.number().int().nonnegative(),
+  x: z.number().int(),
+  y: z.number().int(),
   w: z.number().int().positive(),
   h: z.number().int().positive(),
 });

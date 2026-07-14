@@ -3,46 +3,45 @@
 Rolling audit of strategies tried against the game API. Each policy has a markdown
 write-up (`NNN-name.md`) and an executable module (`NNN-name.ts`).
 
+> **OUTDATED (2026-07-14):** Standalone policy workers (`001-init`, `002-autoplay`)
+> are **retired**. Claiming is owned by `npm run jobs` (tileClaimer + flagSpawner)
+> plus the UI claim queue. Do not run `npm run policy` / `npm run play` for live
+> play — they compete for the shared `place-tile` rate limit. `ab-test.json`
+> policies list is empty so `npm start` will not spawn them.
+
 ## Active policies
 
-| ID | Name | Zone | Status | Result | Notes |
-|---|---|---|---|---|---|
-| 001 | init | left half | ready | pending | API discovery baseline |
-| 002 | autoplay | right half | **running** | active | spiral claim loop via gateway |
+_None. Use gateway + pollers + jobs + UI._
 
-## How to run
+## How to run (historical — outdated)
 
 ```bash
 cd game
 pnpm policy test 001-init    # single dry-run tick (safe)
-pnpm policy run 001-init     # continuous loop
+pnpm policy run 001-init     # continuous loop — DO NOT use for live claiming
 pnpm policy restart 001-init # stop + spawn new run
-pnpm start                   # gateway + pollers + all policies in ab-test.json
+pnpm start                   # gateway + pollers (+ policies only if listed in ab-test.json)
 ```
 
 ## A/B testing
 
 Edit [`game/config/ab-test.json`](../game/config/ab-test.json) to assign policies to
-non-overlapping map zones. Example for two horizontal halves:
+non-overlapping map zones. Currently `"policies": []` (none active).
 
-```json
-{
-  "board": { "width": 100, "height": 100 },
-  "policies": [
-    { "key": "001-init", "zone": { "x": 0, "y": 0, "w": 50, "h": 100 } },
-    { "key": "002-greedy", "zone": { "x": 50, "y": 0, "w": 50, "h": 100 } }
-  ]
-}
-```
+## Retired / outdated policies
 
-## Retired / failed policies
-
-_None yet._
+| ID | Name | Status | Result | Notes |
+|---|---|---|---|---|
+| 001 | init | **outdated** | retired | API discovery baseline — superseded by pollers + jobs |
+| 002 | autoplay | **outdated** | retired | Spiral claim loop burned rate limit + many `INVALID_TARGET`; replaced by UI queue + tileClaimer |
 
 ## Learnings
 
 - All traffic must go through the local gateway (`http://127.0.0.1:3100`) so every
   call is persisted in `api_calls`.
-- State pollers write to `game_states`; policies should prefer cached snapshots to
+- State pollers write to `game_states`; jobs should prefer cached snapshots to
   reduce duplicate reads.
-- Use `DRY_RUN=true` or `pnpm policy test` before issuing mutating moves.
+- Multiple place-tile clients (policy + jobs + UI) share one ~20 rps budget —
+  competing workers mostly produce 429s instead of tiles.
+- Use `DRY_RUN=true` or `pnpm policy test` before issuing mutating moves if
+  reviving a policy for experiments.

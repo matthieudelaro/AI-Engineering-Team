@@ -1,6 +1,8 @@
 import type { Policy, PolicyContext } from "../game/src/policies/types.js";
 import { inZone } from "../game/src/policies/zone.js";
 
+/** OUTDATED (2026-07-14): retired — do not run for live claiming. See policies/README.md. */
+
 const policy: Policy = {
   key: "001-init",
 

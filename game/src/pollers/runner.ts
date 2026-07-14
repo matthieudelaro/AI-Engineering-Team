@@ -158,6 +158,7 @@ export async function startPollers(
         db,
         endpoint.path,
         endpoint.streamPath,
+        endpoint.pollIntervalMs ?? 5000,
       );
       handles.push(streamHandle);
       continue;

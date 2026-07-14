@@ -35,6 +35,9 @@ export interface MapStreamHandle {
   stop: () => void;
 }
 
+/** After the last replay batch, wait this long before applying live stream events. */
+export const MAP_STREAM_CATCH_UP_IDLE_MS = 500;
+
 function cellKey(x: number, y: number): string {
   return `${x},${y}`;
 }
@@ -112,6 +115,13 @@ export function mapResponseToState(map: MapResponse): MapState {
   };
 }
 
+/** Replace in-memory map state from an authoritative GET /map snapshot. */
+export function replaceMapStateFromSnapshot(
+  snapshot: MapResponse,
+): MapState {
+  return mapResponseToState(snapshot);
+}
+
 export function mapStateToResponse(state: MapState): MapResponse {
   return {
     bounds: { ...state.bounds },
@@ -185,6 +195,9 @@ async function persistMapState(
   previousHash: string | null,
 ): Promise<string> {
   const payload = mapStateToResponse(state);
+  if (payload.tiles.length === 0) {
+    return previousHash ?? hashPayload(payload);
+  }
   const payloadHash = hashPayload(payload);
   if (payloadHash === previousHash) {
     return payloadHash;
@@ -214,21 +227,32 @@ export async function startMapStream(
   db: Database,
   snapshotPath: string,
   streamPath: string,
+  snapshotIntervalMs = 5000,
 ): Promise<MapStreamHandle> {
   const stopped = { value: false };
   let afterEventId = "";
   let latestHash: string | null = null;
   let mapState: MapState | null = null;
   let persistTimer: ReturnType<typeof setTimeout> | null = null;
+  let catchUpTimer: ReturnType<typeof setTimeout> | null = null;
+  let snapshotTimer: ReturnType<typeof setInterval> | null = null;
   let dirty = false;
+  let streamCatchingUp = false;
 
-  const flushPersist = async (): Promise<void> => {
+  const flushPersist = async (force = false): Promise<void> => {
     persistTimer = null;
-    if (!dirty || !mapState) {
+    if (!mapState) {
+      return;
+    }
+    if (!force && !dirty) {
       return;
     }
     dirty = false;
-    latestHash = await persistMapState(db, mapState, latestHash);
+    latestHash = await persistMapState(
+      db,
+      mapState,
+      force ? null : latestHash,
+    );
   };
 
   const schedulePersist = (): void => {
@@ -241,20 +265,56 @@ export async function startMapStream(
     }, 500);
   };
 
+  const scheduleCatchUpEnd = (): void => {
+    if (catchUpTimer) {
+      clearTimeout(catchUpTimer);
+    }
+    catchUpTimer = setTimeout(() => {
+      catchUpTimer = null;
+      streamCatchingUp = false;
+    }, MAP_STREAM_CATCH_UP_IDLE_MS);
+  };
+
+  const beginCatchUp = (): void => {
+    streamCatchingUp = true;
+    scheduleCatchUpEnd();
+  };
+
+  const reconcileFromSnapshot = async (): Promise<void> => {
+    if (stopped.value) {
+      return;
+    }
+    const client = new GameClient(env, { source: "poller" });
+    const snapshot = await fetchInitialMap(client, snapshotPath);
+    if (!snapshot?.tiles?.length) {
+      return;
+    }
+    mapState = replaceMapStateFromSnapshot(snapshot);
+    await flushPersist(true);
+    await logMapStreamEvent(db, "info", "map_stream_reconcile", "replaced map from live snapshot", {
+      tiles: snapshot.tiles.length,
+    });
+  };
+
   const bootstrap = async (): Promise<boolean> => {
     const client = new GameClient(env, { source: "poller" });
     const snapshot = await fetchInitialMap(client, snapshotPath);
-    if (!snapshot?.tiles) {
-      await logMapStreamEvent(db, "warn", "map_stream_bootstrap_failed", "initial map fetch failed");
+    if (!snapshot?.tiles?.length) {
+      await logMapStreamEvent(db, "warn", "map_stream_bootstrap_failed", "initial map fetch returned no tiles");
       return false;
     }
-    mapState = mapResponseToState(snapshot);
+    mapState = replaceMapStateFromSnapshot(snapshot);
     latestHash = await persistMapState(db, mapState, null);
+    beginCatchUp();
     await logMapStreamEvent(db, "info", "map_stream_bootstrap", "loaded initial map snapshot", {
       tiles: snapshot.tiles.length,
     });
     return true;
   };
+
+  snapshotTimer = setInterval(() => {
+    void reconcileFromSnapshot();
+  }, snapshotIntervalMs);
 
   const consumeStream = async (): Promise<void> => {
     while (!stopped.value) {
@@ -264,6 +324,11 @@ export async function startMapStream(
           await new Promise((resolve) => setTimeout(resolve, 5000));
           continue;
         }
+      }
+
+      const resumingLiveStream = afterEventId !== "";
+      if (!resumingLiveStream) {
+        beginCatchUp();
       }
 
       const query = afterEventId
@@ -297,6 +362,7 @@ export async function startMapStream(
 
         await logMapStreamEvent(db, "info", "map_stream_connected", "map stream connected", {
           afterEventId: afterEventId || null,
+          resumingLiveStream,
         });
 
         const reader = response.body.getReader();
@@ -315,6 +381,10 @@ export async function startMapStream(
 
           for (const event of events) {
             afterEventId = event.event_id;
+            if (streamCatchingUp) {
+              scheduleCatchUpEnd();
+              continue;
+            }
             if (mapState && applyMapStreamEvent(mapState, event)) {
               schedulePersist();
             }
@@ -339,6 +409,12 @@ export async function startMapStream(
       stopped.value = true;
       if (persistTimer) {
         clearTimeout(persistTimer);
+      }
+      if (catchUpTimer) {
+        clearTimeout(catchUpTimer);
+      }
+      if (snapshotTimer) {
+        clearInterval(snapshotTimer);
       }
     },
   };

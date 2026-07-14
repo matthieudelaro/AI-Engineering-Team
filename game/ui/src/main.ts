@@ -1,28 +1,38 @@
 import "./style.css";
 import {
   bindRateBudget,
+  enqueueUiClaims,
   fetchLeaderboard,
-  fetchMap,
+  fetchMapLive,
+  fetchMapResolved,
   formatCacheAge,
+  isSelfOwner,
+  isSelfTile,
   mapStreamUrl,
   ownershipColor,
   ownershipName,
-  placeTile,
+  touchUiClaimActivity,
+  type CachedReadMeta,
 } from "./api.js";
 import { buildPlayerColors, mapColorForPlayer } from "./playerColors.js";
 import { initMapZoom } from "./mapZoom.js";
 import { initApiConsole, logApiCall } from "./apiConsole.js";
 import { initRatePanel } from "./ratePanel.js";
-import { applyMapStreamEvent, playerFromDetail, subscribeMapStream, type MapStreamEvent } from "./mapStream.js";
-import { ClaimQueue } from "./claimQueue.js";
+import { applyMapStreamEvent, subscribeMapStream, type MapStreamEvent } from "./mapStream.js";
+import {
+  brushRadiusFromModifiers,
+  diamondCells,
+  lineCells,
+  type BrushModifiers,
+} from "./claimDiamond.js";
+import { UiClaimBatcher } from "./uiClaimBatch.js";
+import { PLAYER_ID } from "./config.js";
 import { RateBudget } from "./rateBudget.js";
 import type { BoundBox, LeaderboardEntry, MapResponse, PlayerColors, Tile } from "./types.js";
 
 const LEADERBOARD_POLL_MS = 3000;
-const MAP_CACHE_FALLBACK_MS = 5000;
-/** Manual click-drag claims — no artificial throttle. */
-const CLAIM_INTERVAL_MS = 0;
-
+/** Max staleness for map display — sync from postgres cache on this interval. */
+const MAP_SYNC_MS = 5000;
 const statsEl = document.getElementById("stats");
 const statusEl = document.getElementById("status");
 const boardEl = document.getElementById("board");
@@ -61,10 +71,10 @@ let playerColors: PlayerColors = {
 let latestMap: MapResponse | null = null;
 let latestLeaderboard: LeaderboardEntry[] = [];
 let mapCacheAge = "";
+let mapDataSource: CachedReadMeta["source"] = "postgres";
 let mapLive = false;
 let mapStreamOffline = false;
 let streamCatchingUp = true;
-let cacheFallbackTimer: ReturnType<typeof setInterval> | null = null;
 let streamFlushTimer: ReturnType<typeof setTimeout> | null = null;
 let boundsExpandedPending = false;
 let lastPlayerColorKey = "";
@@ -72,15 +82,26 @@ let leaderboardCacheAge = "";
 let lastBounds: BoundBox | null = null;
 let painting = false;
 let paintPointerId: number | null = null;
+let lastPaintCell: { x: number; y: number } | null = null;
+let lastUiActivityTouch = 0;
+const heldBrushKeys = { a: false, s: false, d: false };
 const tileIndex = new Map<string, Tile>();
 const pendingCells = new Set<string>();
 
-const claimQueue = new ClaimQueue((x, y) => {
-  void sendClaim(x, y);
-}, CLAIM_INTERVAL_MS);
+const claimBatcher = new UiClaimBatcher((tiles) => {
+  enqueueUiClaims(tiles);
+});
 
 function cellKey(x: number, y: number): string {
   return `${x},${y}`;
+}
+
+function maybeTouchUiActivity(force = false): void {
+  const now = Date.now();
+  if (force || now - lastUiActivityTouch >= 250) {
+    lastUiActivityTouch = now;
+    touchUiClaimActivity();
+  }
 }
 
 function setStatus(message: string): void {
@@ -92,12 +113,19 @@ function updateStats(): void {
     statsEl.textContent = "Waiting for map…";
     return;
   }
-  const selfTiles = [...tileIndex.values()].filter(
-    (t) => ownershipName(t.ownership) === playerColors.selfName,
+  const selfTiles = [...tileIndex.values()].filter((t) =>
+    isSelfTile(t.ownership, playerColors.selfName, PLAYER_ID),
   ).length;
   const total = latestMap.tiles.length;
   const name = playerColors.selfName ?? "you";
-  statsEl.textContent = `${name}: ${selfTiles} tiles · map shows ${total} claimed · ${rateBudget.label()} · map ${mapLive ? "stream" : mapStreamOffline ? "cache (stream offline)" : "cache"}${mapCacheAge ? ` (${mapCacheAge})` : ""}, lb ${leaderboardCacheAge} · bounds (${latestMap.bounds.min_x}…${latestMap.bounds.max_x}, ${latestMap.bounds.min_y}…${latestMap.bounds.max_y})`;
+  const mapSourceLabel = mapLive
+    ? "stream + live"
+    : mapStreamOffline
+      ? "live (stream offline)"
+      : mapDataSource === "live"
+        ? "live"
+        : "cache";
+  statsEl.textContent = `${name}: ${selfTiles} tiles · map shows ${total} claimed · ${rateBudget.label()} · map ${mapSourceLabel}${mapCacheAge ? ` (${mapCacheAge})` : ""}, lb ${leaderboardCacheAge} · bounds (${latestMap.bounds.min_x}…${latestMap.bounds.max_x}, ${latestMap.bounds.min_y}…${latestMap.bounds.max_y})`;
 }
 
 function boundsEqual(a: BoundBox, b: BoundBox): boolean {
@@ -199,7 +227,21 @@ function colorForTile(tile: Tile | undefined): string {
   if (!tile) {
     return "#1e2836";
   }
+  const owner = ownershipName(tile.ownership);
+  if (isSelfOwner(owner, playerColors.selfName, PLAYER_ID)) {
+    return playerColors.selfColor;
+  }
   return ownershipColor(tile.ownership, playerColors) ?? "#5b6b82";
+}
+
+function clearPendingIfResolved(x: number, y: number, tile: Tile | undefined): void {
+  if (!pendingCells.has(cellKey(x, y))) {
+    return;
+  }
+  const owner = tile ? ownershipName(tile.ownership) : null;
+  if (owner) {
+    pendingCells.delete(cellKey(x, y));
+  }
 }
 
 function updateCell(x: number, y: number, tile: Tile | undefined): boolean {
@@ -211,8 +253,9 @@ function updateCell(x: number, y: number, tile: Tile | undefined): boolean {
   }
 
   const owner = tile ? ownershipName(tile.ownership) : null;
+  clearPendingIfResolved(x, y, tile);
   cell.classList.toggle("empty", !owner);
-  cell.classList.toggle("self", owner === playerColors.selfName);
+  cell.classList.toggle("self", isSelfOwner(owner, playerColors.selfName, PLAYER_ID));
   cell.classList.toggle("flag", tile?.has_flag ?? false);
   cell.classList.toggle("pending", pendingCells.has(cellKey(x, y)));
   cell.style.backgroundColor = colorForTile(tile);
@@ -250,7 +293,7 @@ function renderBoard(map: MapResponse, refit = false): void {
       if (!owner) {
         cell.classList.add("empty");
       }
-      if (owner === playerColors.selfName) {
+      if (isSelfOwner(owner, playerColors.selfName, PLAYER_ID)) {
         cell.classList.add("self");
       }
       if (tile?.has_flag) {
@@ -267,7 +310,9 @@ function renderBoard(map: MapResponse, refit = false): void {
 
   if (refit) {
     requestAnimationFrame(() => {
-      mapZoom.fitToView();
+      requestAnimationFrame(() => {
+        mapZoom.fitToView();
+      });
     });
   }
 }
@@ -277,7 +322,7 @@ function isOwnTile(x: number, y: number): boolean {
   if (!tile) {
     return false;
   }
-  return ownershipName(tile.ownership) === playerColors.selfName;
+  return isSelfTile(tile.ownership, playerColors.selfName, PLAYER_ID);
 }
 
 function markCellPending(x: number, y: number): void {
@@ -287,10 +332,7 @@ function markCellPending(x: number, y: number): void {
   cell?.classList.add("pending");
 }
 
-function tryClaim(x: number, y: number): void {
-  if (playerColors.selfName === null) {
-    return;
-  }
+function tryClaimOne(x: number, y: number): void {
   if (isOwnTile(x, y)) {
     return;
   }
@@ -299,67 +341,146 @@ function tryClaim(x: number, y: number): void {
     return;
   }
   pendingCells.add(k);
-  claimQueue.enqueue(x, y);
+  claimBatcher.enqueue(x, y);
   markCellPending(x, y);
 }
 
-async function sendClaim(x: number, y: number): Promise<void> {
-  try {
-    const result = await placeTile(x, y);
-    if (result.rejected) {
-      setStatus(`Rejected (${x},${y}): ${result.rejected.reason}`);
-      pendingCells.delete(cellKey(x, y));
-      claimQueue.unmarkOwned(x, y);
-      if (result.rejected.retry_after) {
-        await new Promise((r) => setTimeout(r, result.rejected!.retry_after! * 1000));
-      }
-    } else {
-      setStatus("");
-      claimQueue.markOwned(x, y);
-    }
-    updateStats();
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "claim failed";
-    setStatus(message);
-    pendingCells.delete(cellKey(x, y));
-    claimQueue.unmarkOwned(x, y);
+function brushModifiersFromEvent(event: PointerEvent | MouseEvent | KeyboardEvent): BrushModifiers {
+  return {
+    shift: event.shiftKey,
+    a: heldBrushKeys.a,
+    s: heldBrushKeys.s,
+    d: heldBrushKeys.d,
+  };
+}
+
+function stampBrush(x: number, y: number, radius: number): void {
+  if (radius <= 0) {
+    tryClaimOne(x, y);
+    return;
   }
+  for (const cell of diamondCells(x, y, radius)) {
+    tryClaimOne(cell.x, cell.y);
+  }
+}
+
+/** Claim along the stroke, filling gaps between sparse pointer samples. */
+function paintStroke(x: number, y: number, mods: BrushModifiers): void {
+  if (playerColors.selfName === null) {
+    return;
+  }
+  const radius = brushRadiusFromModifiers(mods);
+  const path =
+    lastPaintCell === null
+      ? [{ x, y }]
+      : lineCells(lastPaintCell, { x, y });
+  for (const cell of path) {
+    stampBrush(cell.x, cell.y, radius);
+  }
+  lastPaintCell = { x, y };
+}
+
+function tileChanged(previous: Tile | undefined, next: Tile): boolean {
+  if (!previous) {
+    return true;
+  }
+  if (previous.has_flag !== next.has_flag) {
+    return true;
+  }
+  return ownershipName(previous.ownership) !== ownershipName(next.ownership);
+}
+
+function applyMapSnapshot(map: MapResponse, meta: CachedReadMeta): void {
+  mapDataSource = meta.source;
+  mapCacheAge =
+    meta.source === "live" ? "just now" : formatCacheAge(meta.fetchedAt);
+
+  const previousBounds = lastBounds ? { ...lastBounds } : null;
+  const expanded =
+    previousBounds !== null &&
+    !boundsEqual(previousBounds, map.bounds) &&
+    boundsExpanded(previousBounds, map.bounds);
+  const boundsChanged =
+    previousBounds !== null && !boundsEqual(previousBounds, map.bounds);
+  const isInitial = previousBounds === null;
+
+  latestMap = map;
+
+  if (isInitial || expanded || boundsChanged) {
+    rebuildTileIndex(map);
+    if (!painting) {
+      pendingCells.clear();
+      renderBoard(map, isInitial || expanded);
+    }
+    lastBounds = { ...map.bounds };
+    updateStats();
+    if (expanded) {
+      void loadIdentity();
+    }
+    return;
+  }
+
+  const previousKeys = new Set(tileIndex.keys());
+  const nextKeys = new Set(map.tiles.map((tile) => cellKey(tile.x, tile.y)));
+
+  let needsFullRender = false;
+  if (!painting) {
+    for (const tile of map.tiles) {
+      const previous = tileIndex.get(cellKey(tile.x, tile.y));
+      if (tileChanged(previous, tile)) {
+        clearPendingIfResolved(tile.x, tile.y, tile);
+        if (!updateCell(tile.x, tile.y, tile)) {
+          needsFullRender = true;
+          break;
+        }
+      }
+    }
+
+    if (!needsFullRender) {
+      for (const key of previousKeys) {
+        if (nextKeys.has(key)) {
+          continue;
+        }
+        const [xs, ys] = key.split(",");
+        const x = Number.parseInt(xs!, 10);
+        const y = Number.parseInt(ys!, 10);
+        if (!updateCell(x, y, undefined)) {
+          needsFullRender = true;
+          break;
+        }
+      }
+    }
+  }
+
+  rebuildTileIndex(map);
+
+  if (needsFullRender && !painting) {
+    pendingCells.clear();
+    renderBoard(map, false);
+  }
+
+  lastBounds = { ...map.bounds };
+  updateStats();
 }
 
 async function refreshMap(): Promise<void> {
   try {
-    const { data: map, meta } = await fetchMap();
-    mapCacheAge = formatCacheAge(meta.fetchedAt);
-    const expanded =
-      lastBounds !== null &&
-      !boundsEqual(lastBounds, map.bounds) &&
-      boundsExpanded(lastBounds, map.bounds);
-    const shouldRefit = lastBounds === null || expanded;
-
-    latestMap = map;
-    rebuildTileIndex(map);
-    claimQueue.clearClaimed();
-    for (const tile of map.tiles) {
-      if (ownershipName(tile.ownership) === playerColors.selfName) {
-        claimQueue.markOwned(tile.x, tile.y);
-      }
+    let map: MapResponse;
+    let meta: CachedReadMeta;
+    try {
+      map = await fetchMapLive();
+      meta = { fetchedAt: new Date().toISOString(), source: "live" };
+    } catch {
+      const resolved = await fetchMapResolved();
+      map = resolved.data;
+      meta = resolved.meta;
     }
-    if (!painting) {
-      pendingCells.clear();
-      renderBoard(map, shouldRefit);
-    }
-    updateStats();
 
-    if (expanded) {
-      await loadIdentity();
-      setStatus(
-        `Map expanded to (${map.bounds.min_x}…${map.bounds.max_x}, ${map.bounds.min_y}…${map.bounds.max_y})`,
-      );
-    } else if (!mapStreamOffline) {
+    applyMapSnapshot(map, meta);
+
+    if (!mapStreamOffline) {
       setStatus("");
     }
-
-    lastBounds = { ...map.bounds };
   } catch (error) {
     const message = error instanceof Error ? error.message : "map error";
     if (!latestMap) {
@@ -375,27 +496,10 @@ async function refreshMap(): Promise<void> {
   }
 }
 
-function startCacheFallback(): void {
-  if (cacheFallbackTimer) {
-    return;
-  }
-  cacheFallbackTimer = setInterval(() => {
-    void refreshMap();
-  }, MAP_CACHE_FALLBACK_MS);
-}
-
-function stopCacheFallback(): void {
-  if (cacheFallbackTimer) {
-    clearInterval(cacheFallbackTimer);
-    cacheFallbackTimer = null;
-  }
-}
-
 function handleStreamOffline(detail: string, status = 0): void {
   streamCatchingUp = false;
   mapLive = false;
   mapStreamOffline = true;
-  startCacheFallback();
   logApiCall({
     method: "GET",
     path: "/api/v1/games/…/map/stream (game API)",
@@ -414,7 +518,6 @@ function handleStreamOffline(detail: string, status = 0): void {
 
 function handleStreamConnected(): void {
   mapStreamOffline = false;
-  stopCacheFallback();
   if (latestMap) {
     scheduleStreamFlush();
   }
@@ -451,22 +554,53 @@ function stopPainting(): void {
     return;
   }
   painting = false;
+  lastPaintCell = null;
+  claimBatcher.flushNow();
   releasePaintCapture();
   if (latestMap) {
     renderBoard(latestMap);
   }
 }
 
+function setBrushKey(code: string, down: boolean): void {
+  if (code === "KeyA") {
+    heldBrushKeys.a = down;
+  } else if (code === "KeyS") {
+    heldBrushKeys.s = down;
+  } else if (code === "KeyD") {
+    heldBrushKeys.d = down;
+  }
+}
+
+window.addEventListener("keydown", (event) => {
+  if (event.repeat) {
+    return;
+  }
+  setBrushKey(event.code, true);
+});
+
+window.addEventListener("keyup", (event) => {
+  setBrushKey(event.code, false);
+});
+
+window.addEventListener("blur", () => {
+  heldBrushKeys.a = false;
+  heldBrushKeys.s = false;
+  heldBrushKeys.d = false;
+});
+
 boardEl.addEventListener("pointerdown", (event) => {
   if (event.button !== 0 || mapZoom.isPinching() || mapZoom.isPanning()) {
     return;
   }
   painting = true;
+  lastPaintCell = null;
   paintPointerId = event.pointerId;
   boardEl.setPointerCapture(event.pointerId);
   const pos = cellFromPointer(event);
   if (pos) {
-    tryClaim(pos.x, pos.y);
+    maybeTouchUiActivity(true);
+    paintStroke(pos.x, pos.y, brushModifiersFromEvent(event));
   }
 });
 
@@ -476,7 +610,8 @@ boardEl.addEventListener("pointermove", (event) => {
   }
   const pos = cellFromPointer(event);
   if (pos) {
-    tryClaim(pos.x, pos.y);
+    maybeTouchUiActivity();
+    paintStroke(pos.x, pos.y, brushModifiersFromEvent(event));
   }
 });
 
@@ -484,6 +619,7 @@ boardEl.addEventListener("pointerup", (event) => {
   if (paintPointerId === event.pointerId) {
     releasePaintCapture();
   }
+  maybeTouchUiActivity(true);
   stopPainting();
 });
 
@@ -491,6 +627,7 @@ boardEl.addEventListener("pointercancel", (event) => {
   if (paintPointerId === event.pointerId) {
     releasePaintCapture();
   }
+  maybeTouchUiActivity(true);
   stopPainting();
 });
 
@@ -540,15 +677,12 @@ function handleMapStreamBatch(events: MapStreamEvent[]): void {
     }
 
     mapLive = true;
-    const owner = playerFromDetail(event.detail);
     const x = event.detail.x;
     const y = event.detail.y;
-    if (owner === playerColors.selfName && typeof x === "number" && typeof y === "number") {
-      claimQueue.markOwned(x, y);
-    }
 
     if (typeof x === "number" && typeof y === "number") {
       const tile = tileIndex.get(cellKey(x, y));
+      clearPendingIfResolved(x, y, tile);
       if (!updateCell(x, y, tile)) {
         needsFullRender = true;
       }
@@ -576,6 +710,14 @@ function handleMapStreamBatch(events: MapStreamEvent[]): void {
 
 async function init(): Promise<void> {
   await loadIdentity();
+  try {
+    const bootstrap = await fetchMapResolved();
+    if (bootstrap.data.tiles.length > 0) {
+      applyMapSnapshot(bootstrap.data, bootstrap.meta);
+    }
+  } catch {
+    // cache miss — live refresh below
+  }
   await refreshMap();
   streamCatchingUp = true;
   subscribeMapStream(mapStreamUrl(), {
@@ -584,6 +726,7 @@ async function init(): Promise<void> {
     onConnected: handleStreamConnected,
   });
   setInterval(() => void loadIdentity(), LEADERBOARD_POLL_MS);
+  setInterval(() => void refreshMap(), MAP_SYNC_MS);
 }
 
 void init();

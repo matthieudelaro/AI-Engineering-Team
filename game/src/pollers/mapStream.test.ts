@@ -5,6 +5,7 @@ import {
   mapStateToResponse,
   parseSseEvents,
   playerFromDetail,
+  replaceMapStateFromSnapshot,
 } from "./mapStream.js";
 
 describe("playerFromDetail", () => {
@@ -88,5 +89,48 @@ describe("applyMapStreamEvent", () => {
 
     expect(changed).toBe(false);
     expect(state.tiles.size).toBe(0);
+  });
+});
+
+describe("replaceMapStateFromSnapshot", () => {
+  it("drops tiles that are absent from the live snapshot", () => {
+    const stale = mapResponseToState({
+      bounds: { min_x: 0, min_y: 0, max_x: 1, max_y: 0 },
+      tiles: [
+        { x: 0, y: 0, ownership: { owned: "OldOwner" }, has_flag: false },
+        { x: 1, y: 0, ownership: { owned: "Ghost" }, has_flag: false },
+      ],
+      fog_padding_tiles: 0,
+    });
+    expect(stale.tiles.size).toBe(2);
+
+    const fresh = replaceMapStateFromSnapshot({
+      bounds: { min_x: 0, min_y: 0, max_x: 0, max_y: 0 },
+      tiles: [{ x: 0, y: 0, ownership: "neutral", has_flag: false }],
+      fog_padding_tiles: 0,
+    });
+
+    expect(fresh.tiles.size).toBe(1);
+    expect(fresh.tiles.get("0,0")?.ownership).toBe("neutral");
+    expect(fresh.tiles.has("1,0")).toBe(false);
+  });
+
+  it("does not apply historical replay over a neutral bootstrap cell", () => {
+    const state = replaceMapStateFromSnapshot({
+      bounds: { min_x: 0, min_y: 0, max_x: 0, max_y: 0 },
+      tiles: [{ x: 0, y: 0, ownership: "neutral", has_flag: false }],
+      fog_padding_tiles: 0,
+    });
+
+    // Catch-up replay is skipped in the poller; state must stay neutral.
+    expect(state.tiles.get("0,0")?.ownership).toBe("neutral");
+
+    applyMapStreamEvent(state, {
+      event_id: "99",
+      event_type: "tile_captured",
+      detail: { player_id: "LiveOwner", x: 0, y: 0 },
+    });
+
+    expect(state.tiles.get("0,0")?.ownership).toEqual({ owned: "LiveOwner" });
   });
 });

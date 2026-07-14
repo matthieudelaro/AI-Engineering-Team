@@ -7,6 +7,7 @@ import {
   buildOwnershipMap,
   createJobState,
   defaultPlaceDelayMs,
+  isUiClaimActive,
   loadMap,
   logJobEvent,
   placeTile,
@@ -176,6 +177,11 @@ async function spawnerTick(
   const client = new GameClient(env, { source: "job" });
   const schedule = (delayMs: number) =>
     scheduleJobTick(state, () => spawnerTick(env, db, state, limiter, selfCache), delayMs);
+
+  if (await isUiClaimActive(env)) {
+    schedule(100);
+    return;
+  }
 
   try {
     const self = await resolveSelfContext(db, selfCache);

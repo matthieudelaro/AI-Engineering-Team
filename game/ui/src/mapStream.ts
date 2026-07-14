@@ -93,7 +93,12 @@ export function applyMapStreamEvent(
   };
   const existed = tileIndex.has(key);
   tileIndex.set(key, tile);
-  if (!existed) {
+  if (existed) {
+    const index = map.tiles.findIndex((entry) => entry.x === x && entry.y === y);
+    if (index >= 0) {
+      map.tiles[index] = tile;
+    }
+  } else {
     map.tiles.push(tile);
   }
 

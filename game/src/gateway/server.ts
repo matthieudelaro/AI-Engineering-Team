@@ -1,6 +1,7 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import { Readable } from "node:stream";
 import { sql } from "drizzle-orm";
+import { z } from "zod";
 import type { Env } from "../config.js";
 import type { ApiEndpointsConfig } from "../config.js";
 import { createDb, type Database } from "../db/index.js";
@@ -8,6 +9,30 @@ import { apiCalls } from "../db/schema.js";
 import { buildRateStatsResponse, endpointLabel, formatSourceBreakdown, PINNED_ENDPOINT_DEFAULTS, PINNED_ENDPOINT_KEYS } from "./rateStats.js";
 import { listCachedGameStates, readCachedGameState } from "./stateCache.js";
 import { redactHeaders, truncateBody } from "./redact.js";
+import { getUiClaimActivity, touchUiClaimActivity } from "./uiClaimPriority.js";
+import {
+  ackUiClaimTiles,
+  enqueueUiClaimTiles,
+  requeueUiClaimTilesFront,
+  scheduleUiClaimRetry,
+  takeUiClaimTiles,
+  UI_CLAIM_TAKE_DEFAULT_LIMIT,
+} from "./uiClaimQueue.js";
+
+const uiClaimTileSchema = z.object({
+  x: z.number(),
+  y: z.number(),
+});
+
+const uiClaimEnqueueSchema = z.object({
+  tiles: z.array(uiClaimTileSchema).min(1),
+});
+
+const uiClaimTakeSchema = z.object({
+  limit: z.number().int().positive().optional(),
+});
+
+const uiClaimRetrySchema = uiClaimTileSchema;
 
 export interface GatewayStats {
   totalCalls: number;
@@ -108,6 +133,62 @@ export async function createGatewayServer(
     };
   });
 
+  app.get("/_gateway/ui-claim-active", async () =>
+    getUiClaimActivity(env.UI_CLAIM_PRIORITY_MS),
+  );
+
+  app.post("/_gateway/ui-claim-active", async (_request, reply) => {
+    touchUiClaimActivity();
+    return reply.status(204).send();
+  });
+
+  app.post("/_gateway/ui-claim-queue", async (request, reply) => {
+    const parsed = uiClaimEnqueueSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: "invalid_body", issues: parsed.error.issues });
+    }
+    enqueueUiClaimTiles(parsed.data.tiles);
+    touchUiClaimActivity();
+    return reply.status(204).send();
+  });
+
+  app.post("/_gateway/ui-claim-queue/take", async (request, reply) => {
+    const parsed = uiClaimTakeSchema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.status(400).send({ error: "invalid_body", issues: parsed.error.issues });
+    }
+    const limit = parsed.data.limit ?? UI_CLAIM_TAKE_DEFAULT_LIMIT;
+    return { tiles: takeUiClaimTiles(limit) };
+  });
+
+  app.post("/_gateway/ui-claim-queue/retry", async (request, reply) => {
+    const parsed = uiClaimRetrySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: "invalid_body", issues: parsed.error.issues });
+    }
+    const { x, y } = parsed.data;
+    scheduleUiClaimRetry(x, y);
+    return reply.status(204).send();
+  });
+
+  app.post("/_gateway/ui-claim-queue/requeue", async (request, reply) => {
+    const parsed = uiClaimEnqueueSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: "invalid_body", issues: parsed.error.issues });
+    }
+    requeueUiClaimTilesFront(parsed.data.tiles);
+    return reply.status(204).send();
+  });
+
+  app.post("/_gateway/ui-claim-queue/ack", async (request, reply) => {
+    const parsed = uiClaimEnqueueSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: "invalid_body", issues: parsed.error.issues });
+    }
+    ackUiClaimTiles(parsed.data.tiles);
+    return reply.status(204).send();
+  });
+
   app.get("/_gateway/state", async () => {
     const snapshots = await listCachedGameStates(db);
     return {
@@ -181,6 +262,15 @@ export async function createGatewayServer(
       path,
       query,
     );
+
+    if (
+      request.method === "POST" &&
+      path === "/api/v1/place-tile" &&
+      typeof source === "string" &&
+      source.toLowerCase() === "ui"
+    ) {
+      touchUiClaimActivity();
+    }
 
     let responseStatus: number | undefined;
     let responseBody: string | undefined;

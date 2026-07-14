@@ -1,5 +1,9 @@
 # Policy 002 — autoplay
 
+> **OUTDATED (2026-07-14):** Retired. Competed with `tileClaimer` for the shared
+> `place-tile` rate limit and produced many `REJECTION_REASON_INVALID_TARGET`
+> responses. Live claiming is UI queue + jobs — do not run this policy.
+
 ## Hypothesis
 
 Once the game session is live, claim tiles in an expanding spiral from the map
@@ -21,5 +25,5 @@ center. Skip cells already owned by us (`is_self` display name from leaderboard)
 
 ## Decision
 
-- **Status:** active autoplayer
-- **Next:** compare tile growth vs manual UI claims
+- **Status:** outdated / retired (2026-07-14)
+- **Next:** use UI claim queue + `npm run jobs` instead

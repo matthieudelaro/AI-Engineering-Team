@@ -1,5 +1,8 @@
 # Policy 001 — init (API discovery)
 
+> **OUTDATED (2026-07-14):** Retired. Discovery/polling is handled by gateway
+> pollers; live claiming is `jobs` + UI queue. Do not run this policy for play.
+
 ## Hypothesis
 
 Before playing to win, we need a complete audit trail of how the external game API

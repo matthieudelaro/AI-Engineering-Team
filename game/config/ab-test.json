@@ -1,13 +1,4 @@
 {
-  "board": { "width": 77, "height": 77 },
-  "policies": [
-    {
-      "key": "001-init",
-      "zone": { "x": -37, "y": -37, "w": 38, "h": 77 }
-    },
-    {
-      "key": "002-autoplay",
-      "zone": { "x": 1, "y": -37, "w": 39, "h": 77 }
-    }
-  ]
+  "board": { "width": 11, "height": 11 },
+  "policies": []
 }

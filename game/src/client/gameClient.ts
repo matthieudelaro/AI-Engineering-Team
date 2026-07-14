@@ -10,6 +10,7 @@ export interface GameClientOptions {
 export interface GameResponse {
   status: number;
   body: string;
+  headers: Headers;
   json: () => unknown;
 }
 
@@ -59,6 +60,7 @@ export class GameClient {
     return {
       status: response.status,
       body: text,
+      headers: response.headers,
       json: () => {
         if (text === "") {
           return null;

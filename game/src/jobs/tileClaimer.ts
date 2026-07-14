@@ -2,17 +2,25 @@ import type { Env } from "../config.js";
 import { GameClient } from "../client/gameClient.js";
 import type { Database } from "../db/index.js";
 import type { TokenBucketRateLimiter } from "../pollers/rateLimiter.js";
+import {
+  runAutoClaimWorkers,
+  runUiQueueWorkers,
+  type WorkerContext,
+} from "./claimWorkerPool.js";
 import { pickClaimTarget, type Point } from "./claimStrategy.js";
 import {
+  buildOwnershipMap,
   createJobState,
   defaultPlaceDelayMs,
   loadMap,
   logJobEvent,
   ownerName,
-  placeTile,
+  requeueUiClaims,
   resolveSelfContext,
   scheduleJobTick,
   stopJobState,
+  takeUiClaimQueue,
+  UI_CLAIM_DRAIN_BATCH,
   type JobHandle,
   type SelfContext,
 } from "./shared.js";
@@ -47,6 +55,27 @@ function pruneRecentClaims(
       recentClaims.splice(i, 1);
     }
   }
+}
+
+function buildWorkerContext(
+  env: Env,
+  db: Database,
+  client: GameClient,
+  limiter: TokenBucketRateLimiter,
+  map: NonNullable<Awaited<ReturnType<typeof loadMap>>>,
+  self: SelfContext,
+): WorkerContext {
+  return {
+    env,
+    db,
+    client,
+    limiter,
+    map,
+    self,
+    recordSuccess: recordRecentClaim,
+    ownedSet: buildOwnershipMap(map.tiles, self.name).owned,
+    pendingClaims: new Set<string>(),
+  };
 }
 
 async function claimerTick(
@@ -89,45 +118,44 @@ async function claimerTick(
       return;
     }
 
-    const inFlight: Array<Promise<void>> = [];
-    while (limiter.tryAcquire()) {
-      const target = pickClaimTarget(map, self, recentClaims);
-      if (!target) {
-        break;
-      }
+    const workerCtx = buildWorkerContext(env, db, client, limiter, map, self);
+    const uiBatch = await takeUiClaimQueue(env, UI_CLAIM_DRAIN_BATCH);
 
-      inFlight.push(
-        (async () => {
-          try {
-            const result = await placeTile(client, null, env.GAME_ID, target.x, target.y);
-            if (!result.ok) {
-              await logJobEvent(db, "warn", "claim_rejected", result.rejected!.reason, {
-                x: target.x,
-                y: target.y,
-              });
-              return;
-            }
-            recordRecentClaim(target.x, target.y);
-          } catch (error) {
-            const message = error instanceof Error ? error.message : "claim fetch failed";
-            await logJobEvent(db, "error", "claim_fetch_error", message, {
-              x: target.x,
-              y: target.y,
-            });
-          }
-        })(),
-      );
+    if (uiBatch.length > 0) {
+      const { delayMs } = await runUiQueueWorkers(workerCtx, uiBatch);
+      schedule(delayMs);
+      return;
     }
 
-    if (inFlight.length === 0) {
+    let uiChecks = 0;
+    const { delayMs, placed } = await runAutoClaimWorkers(
+      workerCtx,
+      recentClaims,
+      async () => {
+        uiChecks += 1;
+        if (uiChecks < 8) {
+          return false;
+        }
+        uiChecks = 0;
+        const uiProbe = await takeUiClaimQueue(env, 1);
+        if (uiProbe.length > 0) {
+          await requeueUiClaims(
+            env,
+            uiProbe.map((t) => ({ x: t.x, y: t.y })),
+          );
+          return true;
+        }
+        return false;
+      },
+    );
+
+    if (placed === 0 && delayMs === 0) {
       await logJobEvent(db, "info", "claim_idle", "no claim target or rate budget empty");
       schedule(defaultPlaceDelayMs());
       return;
     }
 
-    void Promise.all(inFlight).finally(() => {
-      schedule(defaultPlaceDelayMs());
-    });
+    schedule(delayMs);
   } catch (error) {
     const message = error instanceof Error ? error.message : "claim error";
     await logJobEvent(db, "error", "claim_error", message);
@@ -152,5 +180,4 @@ export async function startTileClaimer(
   };
 }
 
-// Re-export for tests that imported pickTileTarget from here.
 export { pickClaimTarget as pickTileTarget } from "./claimStrategy.js";

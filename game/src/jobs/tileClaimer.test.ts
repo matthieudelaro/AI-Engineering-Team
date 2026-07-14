@@ -48,4 +48,29 @@ describe("claimStrategy", () => {
     expect(target!.x).toBeGreaterThanOrEqual(-2);
     expect(target!.x).toBeLessThanOrEqual(2);
   });
+
+  it("does not pick cells already owned or reserved by another worker", () => {
+    vi.spyOn(Math, "random").mockReturnValue(0.1);
+
+    const map = {
+      bounds: { min_x: 0, min_y: 0, max_x: 2, max_y: 0 },
+      tiles: [
+        { x: 0, y: 0, ownership: { owned: "Me" } },
+        { x: 1, y: 0, ownership: { owned: "Me" } },
+        { x: 2, y: 0, ownership: "neutral" },
+      ],
+    };
+    const owned = new Set(["0,0", "1,0"]);
+    const pending = new Set(["2,0"]);
+
+    const target = pickClaimTarget(
+      map,
+      { name: "Me", tileCount: 2 },
+      [{ x: 1, y: 0 }],
+      owned,
+      pending,
+    );
+
+    expect(target).toBeNull();
+  });
 });

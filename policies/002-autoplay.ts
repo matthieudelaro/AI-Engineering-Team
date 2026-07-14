@@ -1,5 +1,7 @@
 import type { Policy, PolicyContext } from "../game/src/policies/types.js";
 
+/** OUTDATED (2026-07-14): retired — do not run for live claiming. See policies/README.md. */
+
 interface MapTile {
   x: number;
   y: number;

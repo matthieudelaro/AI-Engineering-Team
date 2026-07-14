@@ -1,6 +1,6 @@
 import {
+  blockedClaimCells,
   buildOwnershipMap,
-  ownerName,
   type MapResponse,
   type SelfContext,
 } from "./shared.js";
@@ -18,7 +18,9 @@ const NEIGHBORS: Point[] = [
 ];
 
 const RANDOM_RATIO = 0.05;
-const GROW_RATIO = 0.4;
+const GROW_RATIO = 0.85;
+/** Skip expensive bridge when we own more than this many visible tiles. */
+const BRIDGE_OWNED_CAP = 600;
 
 function key(x: number, y: number): string {
   return `${x},${y}`;
@@ -26,29 +28,6 @@ function key(x: number, y: number): string {
 
 function randomInt(min: number, max: number): number {
   return min + Math.floor(Math.random() * (max - min + 1));
-}
-
-function ownedTiles(map: MapResponse, selfName: string | null): Point[] {
-  const tiles: Point[] = [];
-  for (const tile of map.tiles) {
-    if (ownerName(tile.ownership) === selfName) {
-      tiles.push({ x: tile.x, y: tile.y });
-    }
-  }
-  return tiles;
-}
-
-function isOwned(
-  map: MapResponse,
-  selfName: string | null,
-  x: number,
-  y: number,
-): boolean {
-  const tile = map.tiles.find((t) => t.x === x && t.y === y);
-  if (!tile) {
-    return false;
-  }
-  return ownerName(tile.ownership) === selfName;
 }
 
 function inBounds(x: number, y: number, bounds: MapResponse["bounds"]): boolean {
@@ -62,40 +41,30 @@ function inBounds(x: number, y: number, bounds: MapResponse["bounds"]): boolean 
 
 function pickRandomCell(
   map: MapResponse,
-  selfName: string | null,
+  owned: Set<string>,
+  blocked: Set<string>,
 ): Point | null {
-  const { bounds } = map;
-  for (let attempt = 0; attempt < 12; attempt++) {
-    const x = randomInt(bounds.min_x, bounds.max_x);
-    const y = randomInt(bounds.min_y, bounds.max_y);
-    if (!isOwned(map, selfName, x, y)) {
-      return { x, y };
-    }
-  }
-  return null;
+  return pickGrowCell(map, owned, blocked, []);
 }
 
-function pickGrowCell(
-  map: MapResponse,
-  selfName: string | null,
-  recentClaims: Point[],
+function growFromAnchors(
+  owned: Set<string>,
+  blocked: Set<string>,
+  anchors: Point[],
+  bounds: MapResponse["bounds"],
 ): Point | null {
   const candidates: Point[] = [];
   const seen = new Set<string>();
 
-  for (const anchor of recentClaims) {
-    if (!isOwned(map, selfName, anchor.x, anchor.y)) {
+  for (const anchor of anchors) {
+    if (!owned.has(key(anchor.x, anchor.y))) {
       continue;
     }
     for (const { x: dx, y: dy } of NEIGHBORS) {
       const x = anchor.x + dx;
       const y = anchor.y + dy;
       const k = key(x, y);
-      if (
-        seen.has(k) ||
-        isOwned(map, selfName, x, y) ||
-        !inBounds(x, y, map.bounds)
-      ) {
+      if (seen.has(k) || blocked.has(k) || !inBounds(x, y, bounds)) {
         continue;
       }
       seen.add(k);
@@ -107,6 +76,31 @@ function pickGrowCell(
     return null;
   }
   return candidates[Math.floor(Math.random() * candidates.length)]!;
+}
+
+function pickGrowCell(
+  map: MapResponse,
+  owned: Set<string>,
+  blocked: Set<string>,
+  recentClaims: Point[],
+): Point | null {
+  const fromRecent = growFromAnchors(owned, blocked, recentClaims, map.bounds);
+  if (fromRecent) {
+    return fromRecent;
+  }
+
+  if (owned.size === 0) {
+    return null;
+  }
+  const ownedList = [...owned];
+  const sampleSize = Math.min(48, ownedList.length);
+  const anchors: Point[] = [];
+  for (let i = 0; i < sampleSize; i++) {
+    const k = ownedList[Math.floor(Math.random() * ownedList.length)]!;
+    const [xs, ys] = k.split(",");
+    anchors.push({ x: Number(xs), y: Number(ys) });
+  }
+  return growFromAnchors(owned, blocked, anchors, map.bounds);
 }
 
 function findConnectedComponents(tiles: Point[]): Point[][] {
@@ -177,14 +171,20 @@ function lineBetween(a: Point, b: Point): Point[] {
 
 function pickBridgeCell(
   map: MapResponse,
-  selfName: string | null,
+  owned: Set<string>,
+  blocked: Set<string>,
 ): Point | null {
-  const owned = ownedTiles(map, selfName);
-  if (owned.length < 2) {
+  if (owned.size < 2 || owned.size > BRIDGE_OWNED_CAP) {
     return null;
   }
 
-  const components = findConnectedComponents(owned);
+  const tiles: Point[] = [];
+  for (const k of owned) {
+    const [xs, ys] = k.split(",");
+    tiles.push({ x: Number(xs), y: Number(ys) });
+  }
+
+  const components = findConnectedComponents(tiles);
   if (components.length < 2) {
     return null;
   }
@@ -193,38 +193,33 @@ function pickBridgeCell(
   let bestPair: { a: Point; b: Point } | null = null;
   let bestScore = Number.POSITIVE_INFINITY;
 
-  for (let i = 0; i < sorted.length; i++) {
-    for (let j = i + 1; j < sorted.length; j++) {
-      let closest: { a: Point; b: Point; distSq: number } | null = null;
-      for (const a of sorted[i]!) {
-        for (const b of sorted[j]!) {
-          const distSq = (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
-          if (closest === null || distSq < closest.distSq) {
-            closest = { a, b, distSq };
+  const maxComponents = Math.min(sorted.length, 8);
+  for (let i = 0; i < maxComponents; i++) {
+    for (let j = i + 1; j < maxComponents; j++) {
+      const ca = sorted[i]!;
+      const cb = sorted[j]!;
+      for (const a of ca) {
+        for (const b of cb) {
+          const score = Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+          if (score < bestScore) {
+            bestScore = score;
+            bestPair = { a, b };
           }
         }
       }
-      if (closest === null) {
-        continue;
-      }
-      const score = closest.distSq + sorted[i]!.length + sorted[j]!.length;
-      if (score < bestScore) {
-        bestScore = score;
-        bestPair = { a: closest.a, b: closest.b };
-      }
     }
   }
 
-  if (bestPair === null) {
+  if (!bestPair || bestScore <= 1) {
     return null;
   }
 
-  for (const cell of lineBetween(bestPair.a, bestPair.b)) {
-    if (!isOwned(map, selfName, cell.x, cell.y)) {
-      return cell;
+  const line = lineBetween(bestPair.a, bestPair.b);
+  for (const p of line) {
+    if (!blocked.has(key(p.x, p.y)) && inBounds(p.x, p.y, map.bounds)) {
+      return p;
     }
   }
-
   return null;
 }
 
@@ -244,16 +239,17 @@ function pickStrategy(): Strategy {
 function pickForStrategy(
   strategy: Strategy,
   map: MapResponse,
-  self: SelfContext,
+  owned: Set<string>,
+  blocked: Set<string>,
   recentClaims: Point[],
 ): Point | null {
   switch (strategy) {
     case "random":
-      return pickRandomCell(map, self.name);
+      return pickRandomCell(map, owned, blocked);
     case "grow":
-      return pickGrowCell(map, self.name, recentClaims);
+      return pickGrowCell(map, owned, blocked, recentClaims);
     case "bridge":
-      return pickBridgeCell(map, self.name);
+      return pickBridgeCell(map, owned, blocked);
   }
 }
 
@@ -263,12 +259,16 @@ const FALLBACK_ORDER: Record<Strategy, Strategy[]> = {
   bridge: ["grow", "random", "bridge"],
 };
 
-/** 5% random · 40% grow from recent claims · 55% bridge lonely clusters. */
+/** 5% random · 85% grow · 10% bridge (bridge skipped when territory is huge). */
 export function pickClaimTarget(
   map: MapResponse,
   self: SelfContext,
   recentClaims: Point[],
+  ownedSet?: Set<string>,
+  pendingSet?: Set<string>,
 ): Point | null {
+  const owned = ownedSet ?? buildOwnershipMap(map.tiles, self.name).owned;
+  const blocked = blockedClaimCells(owned, pendingSet);
   const primary = pickStrategy();
   const tried = new Set<Strategy>();
 
@@ -277,17 +277,19 @@ export function pickClaimTarget(
       continue;
     }
     tried.add(strategy);
-    const target = pickForStrategy(strategy, map, self, recentClaims);
+    const target = pickForStrategy(strategy, map, owned, blocked, recentClaims);
     if (target !== null) {
       return target;
     }
   }
 
-  const { owned } = buildOwnershipMap(map.tiles, self.name);
   if (owned.size === 0 && self.tileCount === 0) {
     const cx = Math.floor((map.bounds.min_x + map.bounds.max_x) / 2);
     const cy = Math.floor((map.bounds.min_y + map.bounds.max_y) / 2);
-    return { x: cx, y: cy };
+    const k = key(cx, cy);
+    if (!blocked.has(k)) {
+      return { x: cx, y: cy };
+    }
   }
 
   return null;
