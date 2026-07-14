@@ -3,31 +3,37 @@ import {
   bindRateBudget,
   fetchLeaderboard,
   fetchMap,
+  formatCacheAge,
   ownershipColor,
   ownershipName,
   placeTile,
 } from "./api.js";
 import { buildPlayerColors, mapColorForPlayer } from "./playerColors.js";
+import { initMapZoom } from "./mapZoom.js";
 import { initApiConsole } from "./apiConsole.js";
 import { initRatePanel } from "./ratePanel.js";
 import { ClaimQueue } from "./claimQueue.js";
 import { RateBudget } from "./rateBudget.js";
 import type { BoundBox, LeaderboardEntry, MapResponse, PlayerColors, Tile } from "./types.js";
 
-const POLL_MS = 1500;
+const MAP_POLL_MS = 5000;
+const LEADERBOARD_POLL_MS = 3000;
 /** Manual click-drag claims — no artificial throttle. */
 const CLAIM_INTERVAL_MS = 0;
 
 const statsEl = document.getElementById("stats");
 const statusEl = document.getElementById("status");
 const boardEl = document.getElementById("board");
+const boardViewportEl = document.getElementById("board-viewport");
 const leaderboardEl = document.getElementById("leaderboard");
 const apiConsoleEl = document.getElementById("api-console");
 const ratePanelEl = document.getElementById("rate-panel");
 
-if (!statsEl || !statusEl || !boardEl || !leaderboardEl || !apiConsoleEl || !ratePanelEl) {
+if (!statsEl || !statusEl || !boardEl || !boardViewportEl || !leaderboardEl || !apiConsoleEl || !ratePanelEl) {
   throw new Error("missing DOM elements");
 }
+
+const mapZoom = initMapZoom(boardViewportEl, boardEl);
 
 initApiConsole(apiConsoleEl);
 initRatePanel(ratePanelEl);
@@ -43,6 +49,8 @@ let playerColors: PlayerColors = {
 
 let latestMap: MapResponse | null = null;
 let latestLeaderboard: LeaderboardEntry[] = [];
+let mapCacheAge = "";
+let leaderboardCacheAge = "";
 let lastBounds: BoundBox | null = null;
 let painting = false;
 const tileIndex = new Map<string, Tile>();
@@ -70,7 +78,7 @@ function updateStats(): void {
   ).length;
   const total = latestMap.tiles.length;
   const name = playerColors.selfName ?? "you";
-  statsEl.textContent = `${name}: ${selfTiles} tiles · map shows ${total} claimed · ${rateBudget.label()} · UI manual only (run npm run jobs for audited autoplay) · bounds (${latestMap.bounds.min_x}…${latestMap.bounds.max_x}, ${latestMap.bounds.min_y}…${latestMap.bounds.max_y})`;
+  statsEl.textContent = `${name}: ${selfTiles} tiles · map shows ${total} claimed · ${rateBudget.label()} · reads from DB (map ${mapCacheAge}, lb ${leaderboardCacheAge}) · bounds (${latestMap.bounds.min_x}…${latestMap.bounds.max_x}, ${latestMap.bounds.min_y}…${latestMap.bounds.max_y})`;
 }
 
 function boundsEqual(a: BoundBox, b: BoundBox): boolean {
@@ -134,7 +142,8 @@ function renderLeaderboard(entries: LeaderboardEntry[]): void {
 
 async function loadIdentity(): Promise<void> {
   try {
-    const leaderboard = await fetchLeaderboard();
+    const { data: leaderboard, meta } = await fetchLeaderboard();
+    leaderboardCacheAge = formatCacheAge(meta.fetchedAt);
     latestLeaderboard = leaderboard.entries;
     const resolved = buildPlayerColors(leaderboard.entries);
     playerColors.selfName = resolved.selfName;
@@ -270,7 +279,8 @@ async function sendClaim(x: number, y: number): Promise<void> {
 
 async function refreshMap(): Promise<void> {
   try {
-    const map = await fetchMap();
+    const { data: map, meta } = await fetchMap();
+    mapCacheAge = formatCacheAge(meta.fetchedAt);
     const expanded =
       lastBounds !== null &&
       !boundsEqual(lastBounds, map.bounds) &&
@@ -341,7 +351,7 @@ function stopPainting(): void {
 }
 
 boardEl.addEventListener("pointerdown", (event) => {
-  if (event.button !== 0) {
+  if (event.button !== 0 || mapZoom.isPinching()) {
     return;
   }
   painting = true;
@@ -353,7 +363,7 @@ boardEl.addEventListener("pointerdown", (event) => {
 });
 
 boardEl.addEventListener("pointermove", (event) => {
-  if (!painting) {
+  if (!painting || mapZoom.isPinching()) {
     return;
   }
   const pos = cellFromPointer(event);
@@ -384,11 +394,17 @@ boardEl.addEventListener("dragstart", (event) => {
   event.preventDefault();
 });
 
+boardViewportEl.addEventListener("touchstart", (event) => {
+  if (event.touches.length >= 2) {
+    stopPainting();
+  }
+});
+
 async function init(): Promise<void> {
   await loadIdentity();
   await refreshMap();
-  setInterval(() => void loadIdentity(), 5000);
-  setInterval(() => void refreshMap(), POLL_MS);
+  setInterval(() => void loadIdentity(), LEADERBOARD_POLL_MS);
+  setInterval(() => void refreshMap(), MAP_POLL_MS);
 }
 
 void init();

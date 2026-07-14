@@ -1,10 +1,11 @@
 import Fastify, { type FastifyInstance } from "fastify";
-import { desc, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import type { Env } from "../config.js";
 import type { ApiEndpointsConfig } from "../config.js";
 import { createDb, type Database } from "../db/index.js";
 import { apiCalls } from "../db/schema.js";
 import { buildRateStatsResponse, endpointLabel, formatSourceBreakdown, PINNED_ENDPOINT_DEFAULTS, PINNED_ENDPOINT_KEYS } from "./rateStats.js";
+import { listCachedGameStates, readCachedGameState } from "./stateCache.js";
 import { redactHeaders, truncateBody } from "./redact.js";
 
 export interface GatewayStats {
@@ -92,6 +93,32 @@ export async function createGatewayServer(
       })),
     };
   });
+
+  app.get("/_gateway/state", async () => {
+    const snapshots = await listCachedGameStates(db);
+    return {
+      source: "postgresql://game_states",
+      snapshots,
+    };
+  });
+
+  app.get<{ Params: { endpointKey: string } }>(
+    "/_gateway/state/:endpointKey",
+    async (request, reply) => {
+      const { endpointKey } = request.params;
+      const cached = await readCachedGameState(db, endpointKey);
+      if (!cached) {
+        return reply.status(404).send({
+          error: "no_snapshot",
+          endpointKey,
+          message: "pollers have not written this state yet — run npm run pollers",
+        });
+      }
+      reply.header("X-State-Fetched-At", cached.fetchedAt);
+      reply.header("X-State-Source", "postgresql://game_states");
+      return cached.payload;
+    },
+  );
 
   app.all("/*", async (request, reply) => {
     if (request.method === "OPTIONS") {

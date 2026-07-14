@@ -6,19 +6,22 @@
       "key": "flags",
       "method": "GET",
       "path": "/api/v1/flags?game_id=${GAME_ID}",
-      "limitKey": "get_flags"
+      "limitKey": "get_flags",
+      "pollIntervalMs": 5000
     },
     {
       "key": "map",
       "method": "GET",
       "path": "/api/v1/map?game_id=${GAME_ID}",
-      "limitKey": "get_map"
+      "limitKey": "get_map",
+      "pollIntervalMs": 5000
     },
     {
       "key": "leaderboard",
       "method": "GET",
       "path": "/api/v1/leaderboard?game_id=${GAME_ID}",
-      "limitKey": "get_leaderboard"
+      "limitKey": "get_leaderboard",
+      "pollIntervalMs": 3000
     }
   ]
 }

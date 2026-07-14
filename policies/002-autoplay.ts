@@ -12,7 +12,12 @@ interface MapResponse {
 }
 
 interface LeaderboardResponse {
-  entries: Array<{ display_name: string; is_self: boolean; color: string }>;
+  entries: Array<{
+    display_name: string;
+    is_self: boolean;
+    color: string;
+    tile_count?: number;
+  }>;
 }
 
 const NEIGHBORS = [
@@ -102,24 +107,21 @@ const policy: Policy = {
   },
 
   async tick(ctx: PolicyContext): Promise<void> {
-    const gid = encodeURIComponent(ctx.gameId);
-    const lbRes = await ctx.client.get(`/api/v1/leaderboard?game_id=${gid}`);
-    if (lbRes.status !== 200) {
-      await ctx.logEvent("warn", "leaderboard_error", lbRes.body.slice(0, 200));
+    const leaderboard = (await ctx.getLatestState("leaderboard")) as LeaderboardResponse | null;
+    if (!leaderboard?.entries) {
+      await ctx.logEvent("warn", "leaderboard_stale", "no cached leaderboard snapshot yet");
       return;
     }
 
-    const leaderboard = lbRes.json() as LeaderboardResponse;
     const self = leaderboard.entries.find((e) => e.is_self);
     const selfName = self?.display_name ?? null;
 
-    const mapRes = await ctx.client.get(`/api/v1/map?game_id=${gid}`);
-    if (mapRes.status !== 200) {
-      await ctx.logEvent("warn", "map_error", mapRes.body.slice(0, 200));
+    const map = (await ctx.getLatestState("map")) as MapResponse | null;
+    if (!map?.bounds || !map.tiles) {
+      await ctx.logEvent("warn", "map_stale", "no cached map snapshot yet");
       return;
     }
 
-    const map = mapRes.json() as MapResponse;
     const { owned, occupied } = buildOwnershipMap(map.tiles, selfName);
 
     // Sync anchor from visible owned tiles

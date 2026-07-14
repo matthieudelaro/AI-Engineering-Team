@@ -1,29 +1,110 @@
 import { logApiCall } from "./apiConsole.js";
+import { GATEWAY_BASE_URL } from "./config.js";
 import { parseRateLimitHeaders, type RateBudget } from "./rateBudget.js";
 import type {
   ActionResponse,
+  FlagsResponse,
   LeaderboardResponse,
   MapResponse,
   PlayerColors,
 } from "./types.js";
 import { mapColorForPlayer } from "./playerColors.js";
 import { GAME_ID } from "./config.js";
+import { formatCacheAge } from "./cacheAge.js";
 
-const API_BASE = "/api/v1";
+export { formatCacheAge } from "./cacheAge.js";
+
+const GAME_API_BASE = `${GATEWAY_BASE_URL}/api/v1`;
 
 let rateBudget: RateBudget | null = null;
+
+export interface CachedReadMeta {
+  fetchedAt: string | null;
+  source: "postgres";
+}
 
 export function bindRateBudget(budget: RateBudget): void {
   rateBudget = budget;
 }
 
-async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+function gatewayUrl(path: string): string {
+  return `${GATEWAY_BASE_URL}${path}`;
+}
+
+/** Read latest poller snapshot from postgres via gateway — never hits the game API. */
+async function readCachedState<T>(
+  endpointKey: string,
+): Promise<{ data: T; meta: CachedReadMeta }> {
+  const path = `/_gateway/state/${endpointKey}`;
+  const url = gatewayUrl(path);
+  let response: Response;
+  let body: unknown = null;
+
+  try {
+    response = await fetch(url, {
+      headers: {
+        "Content-Type": "application/json",
+        "X-Source": "ui",
+      },
+    });
+    const text = await response.text();
+    if (text) {
+      body = JSON.parse(text) as unknown;
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "cache read failed";
+    logApiCall({
+      method: "GET",
+      path: `${path} (postgres cache)`,
+      status: 0,
+      ok: false,
+      body: null,
+      error: message,
+    });
+    throw error;
+  }
+
+  const fetchedAt = response.headers.get("x-state-fetched-at");
+
+  if (!response.ok) {
+    const detail =
+      typeof body === "object" && body !== null && "message" in body
+        ? String((body as { message: string }).message)
+        : response.statusText;
+    logApiCall({
+      method: "GET",
+      path: `${path} (postgres cache)`,
+      status: response.status,
+      ok: false,
+      body,
+      error: detail,
+      fetchedAt,
+    });
+    throw new Error(detail);
+  }
+
+  logApiCall({
+    method: "GET",
+    path: `${path} (postgres cache)`,
+    status: response.status,
+    ok: true,
+    body,
+    fetchedAt,
+  });
+
+  return {
+    data: body as T,
+    meta: { fetchedAt, source: "postgres" },
+  };
+}
+
+async function postGameAction<T>(path: string, init?: RequestInit): Promise<T> {
   const method = init?.method ?? "GET";
   let response: Response;
   let body: unknown = null;
 
   try {
-    response = await fetch(`${API_BASE}${path}`, {
+    response = await fetch(`${GAME_API_BASE}${path}`, {
       ...init,
       headers: {
         "Content-Type": "application/json",
@@ -45,7 +126,7 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     const message = error instanceof Error ? error.message : "request failed";
     logApiCall({
       method,
-      path,
+      path: `/api/v1${path} (game API)`,
       status: 0,
       ok: false,
       body: null,
@@ -61,7 +142,7 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
         : response.statusText;
     logApiCall({
       method,
-      path,
+      path: `/api/v1${path} (game API)`,
       status: response.status,
       ok: false,
       body,
@@ -72,7 +153,7 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
 
   logApiCall({
     method,
-    path,
+    path: `/api/v1${path} (game API)`,
     status: response.status,
     ok: true,
     body,
@@ -80,18 +161,23 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
-export function fetchMap(gameId = GAME_ID): Promise<MapResponse> {
-  return apiFetch<MapResponse>(`/map?game_id=${encodeURIComponent(gameId)}`);
+export function fetchMap(): Promise<{ data: MapResponse; meta: CachedReadMeta }> {
+  return readCachedState<MapResponse>("map");
 }
 
-export function fetchLeaderboard(gameId = GAME_ID): Promise<LeaderboardResponse> {
-  return apiFetch<LeaderboardResponse>(
-    `/leaderboard?game_id=${encodeURIComponent(gameId)}`,
-  );
+export function fetchLeaderboard(): Promise<{
+  data: LeaderboardResponse;
+  meta: CachedReadMeta;
+}> {
+  return readCachedState<LeaderboardResponse>("leaderboard");
+}
+
+export function fetchFlags(): Promise<{ data: FlagsResponse; meta: CachedReadMeta }> {
+  return readCachedState<FlagsResponse>("flags");
 }
 
 export function placeTile(x: number, y: number, gameId = GAME_ID): Promise<ActionResponse> {
-  return apiFetch<ActionResponse>("/place-tile", {
+  return postGameAction<ActionResponse>("/place-tile", {
     method: "POST",
     body: JSON.stringify({ x, y, game_id: gameId }),
   });

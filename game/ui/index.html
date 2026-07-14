@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AgentWars Map</title>
+    <link rel="icon" href="data:," />
   </head>
   <body>
     <div id="app">
@@ -18,7 +19,9 @@
           <div id="api-console" class="api-console"></div>
         </aside>
         <section class="board-wrap">
-          <div id="board" class="board" role="grid" aria-label="Game map"></div>
+          <div id="board-viewport" class="board-viewport">
+            <div id="board" class="board" role="grid" aria-label="Game map"></div>
+          </div>
         </section>
         <aside class="leaderboard-panel" aria-label="Leaderboard">
           <h2>Leaderboard</h2>
@@ -26,7 +29,7 @@
         </aside>
       </main>
       <footer class="hint">
-        <span>Click or click-drag to claim tiles. Background autoplay runs via <code>npm run jobs</code> (gateway-audited).</span>
+        <span>Map &amp; leaderboard read from postgres cache (pollers). Pinch two fingers on the map to zoom. Only tile claims hit the game API.</span>
         <span class="legend" aria-label="Map legend">
           <span class="legend-item">
             <span class="legend-swatch legend-tile" aria-hidden="true"></span>

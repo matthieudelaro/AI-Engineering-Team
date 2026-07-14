@@ -9,20 +9,14 @@ const policy: Policy = {
   },
 
   async tick(ctx: PolicyContext): Promise<void> {
-    const state = await ctx.getLatestState("state");
+    const state = await ctx.getLatestState("map");
 
     if (state === null) {
-      const response = await ctx.client.get(
-        `/api/v1/map?game_id=${encodeURIComponent(ctx.gameId)}`,
-      );
-      await ctx.logEvent("info", "discovery_fetch", "fetched /state via gateway", {
-        status: response.status,
-        bodyPreview: response.body.slice(0, 500),
-      });
+      await ctx.logEvent("info", "discovery_wait", "waiting for poller map snapshot");
       return;
     }
 
-    await ctx.logEvent("info", "discovery_state_cached", "using cached state snapshot", {
+    await ctx.logEvent("info", "discovery_state_cached", "using cached map snapshot", {
       hasState: true,
     });
 

@@ -7,6 +7,7 @@ export interface ApiLogEntry {
   ok: boolean;
   summary: string;
   error?: string;
+  fetchedAt?: string | null;
 }
 
 const MAX_ENTRIES = 50;
@@ -77,7 +78,10 @@ function render(): void {
 
     const head = document.createElement("div");
     head.className = "api-console-head";
-    head.textContent = `${formatTime(entry.ts)} ${entry.method} ${entry.path} → ${entry.status || "ERR"}`;
+    const cacheNote = entry.path.includes("postgres cache") && entry.fetchedAt
+      ? ` · cached ${new Date(entry.fetchedAt).toLocaleTimeString()}`
+      : "";
+    head.textContent = `${formatTime(entry.ts)} ${entry.method} ${entry.path} → ${entry.status || "ERR"}${cacheNote}`;
 
     const body = document.createElement("pre");
     body.className = "api-console-body";
@@ -100,6 +104,7 @@ export function logApiCall(input: {
   ok: boolean;
   body: unknown;
   error?: string;
+  fetchedAt?: string | null;
 }): void {
   entries.unshift({
     id: nextId++,
@@ -110,6 +115,7 @@ export function logApiCall(input: {
     ok: input.ok,
     summary: summarizeBody(input.path, input.body),
     error: input.error,
+    fetchedAt: input.fetchedAt,
   });
   if (entries.length > MAX_ENTRIES) {
     entries.length = MAX_ENTRIES;

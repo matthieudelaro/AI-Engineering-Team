@@ -37,6 +37,18 @@ export interface ActionResponse {
   rejected?: { reason: string; retry_after?: number };
 }
 
+export interface FlagInfo {
+  flag_id: string;
+  x: number;
+  y: number;
+  pot: number;
+  nuked: boolean;
+}
+
+export interface FlagsResponse {
+  flags: FlagInfo[];
+}
+
 export interface PlayerColors {
   selfName: string | null;
   selfColor: string;

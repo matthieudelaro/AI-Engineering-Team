@@ -83,7 +83,7 @@ async function claimerTick(
         "info",
         "claim_dry_run",
         preview ? `would claim ${preview.x},${preview.y}` : "no target",
-        preview ?? undefined,
+        preview ? { x: preview.x, y: preview.y } : undefined,
       );
       schedule(defaultPlaceDelayMs());
       return;
@@ -98,15 +98,23 @@ async function claimerTick(
 
       inFlight.push(
         (async () => {
-          const result = await placeTile(client, null, env.GAME_ID, target.x, target.y);
-          if (!result.ok) {
-            await logJobEvent(db, "warn", "claim_rejected", result.rejected!.reason, {
+          try {
+            const result = await placeTile(client, null, env.GAME_ID, target.x, target.y);
+            if (!result.ok) {
+              await logJobEvent(db, "warn", "claim_rejected", result.rejected!.reason, {
+                x: target.x,
+                y: target.y,
+              });
+              return;
+            }
+            recordRecentClaim(target.x, target.y);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "claim fetch failed";
+            await logJobEvent(db, "error", "claim_fetch_error", message, {
               x: target.x,
               y: target.y,
             });
-            return;
           }
-          recordRecentClaim(target.x, target.y);
         })(),
       );
     }
