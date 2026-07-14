@@ -1,6 +1,13 @@
 const MAX_SCALE = 10;
 const MIN_SCALE_FLOOR = 0.01;
+/** Allow zooming out past full-map fit down to this fraction of that fit scale. */
+export const MIN_SCALE_RELATIVE_TO_FIT = 0.15;
 const FIT_PADDING_PX = 16;
+
+/** Lowest zoom allowed after a fit — well below “map fills viewport”. */
+export function minScaleFromFit(fitScale: number): number {
+  return Math.max(MIN_SCALE_FLOOR, fitScale * MIN_SCALE_RELATIVE_TO_FIT);
+}
 
 interface Point {
   x: number;
@@ -19,6 +26,14 @@ export interface FitTransform {
   translateY: number;
 }
 
+/** Axis-aligned rectangle in board pixel space (pre-transform). */
+export interface BoardRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export function computeFitTransform(
   viewportWidth: number,
   viewportHeight: number,
@@ -32,11 +47,43 @@ export function computeFitTransform(
 
   const innerW = Math.max(1, viewportWidth - padding * 2);
   const innerH = Math.max(1, viewportHeight - padding * 2);
-  const scale = Math.min(innerW / boardWidth, innerH / boardHeight);
+  const scale = Math.max(
+    MIN_SCALE_FLOOR,
+    Math.min(innerW / boardWidth, innerH / boardHeight),
+  );
   return {
-    scale: Math.max(MIN_SCALE_FLOOR, scale),
+    scale,
     translateX: (viewportWidth - boardWidth * scale) / 2,
     translateY: (viewportHeight - boardHeight * scale) / 2,
+  };
+}
+
+/** Fit a board-pixel rect into the viewport (centered), for content-focused defaults. */
+export function computeFitRectTransform(
+  viewportWidth: number,
+  viewportHeight: number,
+  rect: BoardRect,
+  padding = FIT_PADDING_PX,
+): FitTransform {
+  if (
+    rect.width <= 0 ||
+    rect.height <= 0 ||
+    viewportWidth <= 0 ||
+    viewportHeight <= 0
+  ) {
+    return { scale: 1, translateX: 0, translateY: 0 };
+  }
+
+  const innerW = Math.max(1, viewportWidth - padding * 2);
+  const innerH = Math.max(1, viewportHeight - padding * 2);
+  const scale = Math.max(
+    MIN_SCALE_FLOOR,
+    Math.min(innerW / rect.width, innerH / rect.height),
+  );
+  return {
+    scale,
+    translateX: viewportWidth / 2 - (rect.x + rect.width / 2) * scale,
+    translateY: viewportHeight / 2 - (rect.y + rect.height / 2) * scale,
   };
 }
 
@@ -58,7 +105,11 @@ function touchCenter(touches: TouchList): Point {
   };
 }
 
-export interface MapZoomOptions {
+export interface MapZoomCallbacks {
+  getWorldSize: () => { width: number; height: number };
+  getViewportSize: () => { width: number; height: number };
+  getCamera: () => TransformState;
+  setCamera: (camera: TransformState) => void;
   onPinchStart?: () => void;
   onPanStart?: () => void;
 }
@@ -66,7 +117,10 @@ export interface MapZoomOptions {
 export interface MapZoomController {
   isPinching: () => boolean;
   isPanning: () => boolean;
-  fitToView: () => void;
+  /** Fit the full board into the viewport. Returns false if sizes are not ready. */
+  fitToView: () => boolean;
+  /** Fit a board-pixel rect (e.g. claimed territory). Returns false if sizes are not ready. */
+  fitToBoardRect: (rect: BoardRect) => boolean;
   reset: () => void;
 }
 
@@ -80,10 +134,8 @@ function focalFromClient(viewport: HTMLElement, clientX: number, clientY: number
 
 export function initMapZoom(
   viewport: HTMLElement,
-  board: HTMLElement,
-  options: MapZoomOptions = {},
+  callbacks: MapZoomCallbacks,
 ): MapZoomController {
-  const state: TransformState = { scale: 1, translateX: 0, translateY: 0 };
   let minScale = MIN_SCALE_FLOOR;
   let pinching = false;
   let lastDistance = 0;
@@ -94,12 +146,44 @@ export function initMapZoom(
   let dragStart: Point | null = null;
   let dragOrigin: Point | null = null;
 
-  function applyTransform(): void {
-    board.style.transform = `translate(${state.translateX}px, ${state.translateY}px) scale(${state.scale})`;
+  function getState(): TransformState {
+    return callbacks.getCamera();
+  }
+
+  function setState(state: TransformState): void {
+    callbacks.setCamera(state);
   }
 
   function clampScale(value: number): number {
     return Math.min(MAX_SCALE, Math.max(minScale, value));
+  }
+
+  function sizesReady(): boolean {
+    const { width: vw, height: vh } = callbacks.getViewportSize();
+    const { width: ww, height: wh } = callbacks.getWorldSize();
+    return vw > 0 && vh > 0 && ww > 0 && wh > 0;
+  }
+
+  /** Refresh the zoom-out floor from the full board size. */
+  function updateMinScaleFromFullBoard(): void {
+    const { width: vw, height: vh } = callbacks.getViewportSize();
+    const { width: ww, height: wh } = callbacks.getWorldSize();
+    const fullFit = computeFitTransform(vw, vh, ww, wh);
+    minScale = minScaleFromFit(fullFit.scale);
+  }
+
+  function applyFit(fit: FitTransform): void {
+    const state = getState();
+    state.scale = clampScale(fit.scale);
+    // Always use translate for the clamped scale so the board stays centered.
+    const { width: vw, height: vh } = callbacks.getViewportSize();
+    const cx = vw / 2;
+    const cy = vh / 2;
+    const boardCx = (cx - fit.translateX) / fit.scale;
+    const boardCy = (cy - fit.translateY) / fit.scale;
+    state.translateX = cx - boardCx * state.scale;
+    state.translateY = cy - boardCy * state.scale;
+    setState(state);
   }
 
   function focalPoint(touches: TouchList): Point {
@@ -108,32 +192,41 @@ export function initMapZoom(
   }
 
   function panBy(deltaX: number, deltaY: number): void {
+    const state = getState();
     state.translateX += deltaX;
     state.translateY += deltaY;
-    applyTransform();
+    setState(state);
   }
 
   function zoomAt(focal: Point, nextScale: number): void {
+    const state = getState();
     const clamped = clampScale(nextScale);
     const ratio = clamped / state.scale;
     state.translateX = focal.x - (focal.x - state.translateX) * ratio;
     state.translateY = focal.y - (focal.y - state.translateY) * ratio;
     state.scale = clamped;
-    applyTransform();
+    setState(state);
   }
 
-  function fitToView(): void {
-    const fit = computeFitTransform(
-      viewport.clientWidth,
-      viewport.clientHeight,
-      board.offsetWidth,
-      board.offsetHeight,
-    );
-    state.scale = fit.scale;
-    state.translateX = fit.translateX;
-    state.translateY = fit.translateY;
-    minScale = fit.scale;
-    applyTransform();
+  function fitToView(): boolean {
+    if (!sizesReady()) {
+      return false;
+    }
+    const { width: vw, height: vh } = callbacks.getViewportSize();
+    const { width: ww, height: wh } = callbacks.getWorldSize();
+    updateMinScaleFromFullBoard();
+    applyFit(computeFitTransform(vw, vh, ww, wh));
+    return true;
+  }
+
+  function fitToBoardRect(rect: BoardRect): boolean {
+    if (!sizesReady()) {
+      return false;
+    }
+    const { width: vw, height: vh } = callbacks.getViewportSize();
+    updateMinScaleFromFullBoard();
+    applyFit(computeFitRectTransform(vw, vh, rect));
+    return true;
   }
 
   function reset(): void {
@@ -160,18 +253,20 @@ export function initMapZoom(
     dragPanning = true;
     dragPointerId = event.pointerId;
     dragStart = { x: event.clientX, y: event.clientY };
+    const state = getState();
     dragOrigin = { x: state.translateX, y: state.translateY };
     viewport.setPointerCapture(event.pointerId);
-    options.onPanStart?.();
+    callbacks.onPanStart?.();
   }
 
   function moveDragPan(event: PointerEvent): void {
     if (!dragPanning || event.pointerId !== dragPointerId || !dragStart || !dragOrigin) {
       return;
     }
+    const state = getState();
     state.translateX = dragOrigin.x + (event.clientX - dragStart.x);
     state.translateY = dragOrigin.y + (event.clientY - dragStart.y);
-    applyTransform();
+    setState(state);
   }
 
   function endDragPan(event: PointerEvent): void {
@@ -192,7 +287,6 @@ export function initMapZoom(
   });
 
   viewport.addEventListener("pointerdown", beginDragPan);
-  board.addEventListener("pointerdown", beginDragPan);
   viewport.addEventListener("pointermove", moveDragPan);
   viewport.addEventListener("pointerup", endDragPan);
   viewport.addEventListener("pointercancel", endDragPan);
@@ -205,7 +299,7 @@ export function initMapZoom(
         lastDistance = touchDistance(event.touches);
         touchPanStart = null;
         touchPanOrigin = null;
-        options.onPinchStart?.();
+        callbacks.onPinchStart?.();
       }
     },
     { passive: false },
@@ -222,6 +316,7 @@ export function initMapZoom(
       const distance = touchDistance(event.touches);
       if (lastDistance > 0 && distance > 0) {
         const focal = focalPoint(event.touches);
+        const state = getState();
         zoomAt(focal, state.scale * (distance / lastDistance));
       }
       lastDistance = distance;
@@ -229,11 +324,13 @@ export function initMapZoom(
       const center = touchCenter(event.touches);
       if (touchPanStart === null) {
         touchPanStart = center;
+        const state = getState();
         touchPanOrigin = { x: state.translateX, y: state.translateY };
       } else if (touchPanOrigin) {
+        const state = getState();
         state.translateX = touchPanOrigin.x + (center.x - touchPanStart.x);
         state.translateY = touchPanOrigin.y + (center.y - touchPanStart.y);
-        applyTransform();
+        setState(state);
       }
     },
     { passive: false },
@@ -261,6 +358,7 @@ export function initMapZoom(
       event.preventDefault();
       if (event.ctrlKey || event.metaKey) {
         const focal = focalFromClient(viewport, event.clientX, event.clientY);
+        const state = getState();
         const factor = Math.exp(-event.deltaY * 0.002);
         zoomAt(focal, state.scale * factor);
         return;
@@ -270,12 +368,11 @@ export function initMapZoom(
     { passive: false },
   );
 
-  applyTransform();
-
   return {
     isPinching: () => pinching,
     isPanning: () => dragPanning,
     fitToView,
+    fitToBoardRect,
     reset,
   };
 }

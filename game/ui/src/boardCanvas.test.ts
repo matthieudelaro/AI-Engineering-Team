@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   boardPixelSize,
+  BoardRenderer,
   cellFromPoint,
   cellPixelOrigin,
   CELL_GAP,
@@ -74,5 +75,67 @@ describe("cellFromPoint", () => {
       x: 6,
       y: 9,
     });
+  });
+});
+
+describe("BoardRenderer", () => {
+  const bounds = { min_x: 0, min_y: 0, max_x: 2, max_y: 2 };
+
+  function makeCanvas(): HTMLCanvasElement {
+    const ctx = {
+      setTransform: () => {},
+      clearRect: () => {},
+      fillRect: () => {},
+      fillStyle: "",
+      strokeStyle: "",
+      lineWidth: 0,
+      strokeRect: () => {},
+      createLinearGradient: () => ({ addColorStop: () => {} }),
+      beginPath: () => {},
+      moveTo: () => {},
+      lineTo: () => {},
+      closePath: () => {},
+      fill: () => {},
+    } as unknown as CanvasRenderingContext2D;
+    return {
+      width: 0,
+      height: 0,
+      style: { width: "", height: "" },
+      getContext: () => ctx,
+    } as unknown as HTMLCanvasElement;
+  }
+
+  it("hit-tests through the camera transform", () => {
+    const renderer = new BoardRenderer(makeCanvas());
+    renderer.setViewportCssSize(400, 300);
+    renderer.renderFull(
+      bounds,
+      () => ({ fill: "#000", isSelf: false, hasFlag: false, isPending: false }),
+      [{ x: 1, y: 1 }],
+    );
+    const { width, height } = boardPixelSize(bounds);
+    const fitScale = Math.min(400 / width, 300 / height);
+    const translateX = (400 - width * fitScale) / 2;
+    const translateY = (300 - height * fitScale) / 2;
+    renderer.setCamera({ scale: fitScale, translateX, translateY });
+
+    const origin = cellPixelOrigin(1, 1, bounds);
+    const cssX = translateX + (origin.px + CELL_SIZE / 2) * fitScale;
+    const cssY = translateY + (origin.py + CELL_SIZE / 2) * fitScale;
+    expect(renderer.hitTest(cssX, cssY)).toEqual({ x: 1, y: 1 });
+  });
+
+  it("reports world size from bounds without sizing the canvas to it", () => {
+    const canvas = makeCanvas();
+    const renderer = new BoardRenderer(canvas);
+    renderer.setViewportCssSize(100, 100);
+    renderer.renderFull(
+      bounds,
+      () => ({ fill: "#000", isSelf: false, hasFlag: false, isPending: false }),
+      [],
+    );
+    expect(renderer.fitWorldSize()).toEqual(boardPixelSize(bounds));
+    expect(canvas.width).toBeLessThanOrEqual(300);
+    expect(canvas.height).toBeLessThanOrEqual(300);
   });
 });

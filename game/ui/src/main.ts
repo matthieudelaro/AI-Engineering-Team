@@ -30,7 +30,6 @@ import { PLAYER_ID } from "./config.js";
 import { RateBudget } from "./rateBudget.js";
 import {
   BoardRenderer,
-  cellFromPoint,
   type BoardCellState,
 } from "./boardCanvas.js";
 import type { BoundBox, LeaderboardEntry, MapResponse, PlayerColors, Tile } from "./types.js";
@@ -62,7 +61,16 @@ if (
 
 const boardRenderer = new BoardRenderer(boardEl);
 
-const mapZoom = initMapZoom(boardViewportEl, boardEl, {
+const mapZoom = initMapZoom(boardViewportEl, {
+  getWorldSize: () => boardRenderer.fitWorldSize(),
+  getViewportSize: () => ({
+    width: boardViewportEl.clientWidth,
+    height: boardViewportEl.clientHeight,
+  }),
+  getCamera: () => boardRenderer.getCamera(),
+  setCamera: (camera) => {
+    boardRenderer.setCamera(camera);
+  },
   onPinchStart: () => {
     stopPainting();
     releasePaintCapture();
@@ -104,6 +112,8 @@ let lastUiActivityTouch = 0;
 const heldBrushKeys = { a: false, s: false, d: false };
 const tileIndex = new Map<string, Tile>();
 const pendingCells = new Set<string>();
+/** Retry content-fit when the viewport/board was not laid out yet. */
+let pendingViewFit = false;
 
 const claimBatcher = new UiClaimBatcher((tiles) => {
   enqueueUiClaims(tiles);
@@ -301,19 +311,67 @@ function updateCell(x: number, y: number, tile: Tile | undefined): boolean {
   return true;
 }
 
+function collectRenderCoords(): Array<{ x: number; y: number }> {
+  const coords: Array<{ x: number; y: number }> = [];
+  const seen = new Set<string>();
+  for (const tile of tileIndex.values()) {
+    const key = cellKey(tile.x, tile.y);
+    if (!seen.has(key)) {
+      seen.add(key);
+      coords.push({ x: tile.x, y: tile.y });
+    }
+  }
+  for (const key of pendingCells) {
+    if (seen.has(key)) {
+      continue;
+    }
+    const [xs, ys] = key.split(",");
+    coords.push({
+      x: Number.parseInt(xs!, 10),
+      y: Number.parseInt(ys!, 10),
+    });
+  }
+  return coords;
+}
+
+/** Fit the camera once viewport and world sizes are ready. */
+function applyMapViewFit(): boolean {
+  if (boardViewportEl.clientWidth <= 0 || boardViewportEl.clientHeight <= 0) {
+    return false;
+  }
+  return mapZoom.fitToView();
+}
+
+function scheduleMapViewFit(): void {
+  pendingViewFit = true;
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      if (!pendingViewFit) {
+        return;
+      }
+      if (applyMapViewFit()) {
+        pendingViewFit = false;
+      }
+    });
+  });
+}
+
 function renderBoard(map: MapResponse, refit = false): void {
   hideBoardError();
-  boardRenderer.renderFull(map.bounds, (x, y) => {
-    const tile = tileIndex.get(cellKey(x, y));
-    return cellStateFor(x, y, tile);
-  });
+  boardRenderer.renderFull(
+    map.bounds,
+    (x, y) => {
+      const tile = tileIndex.get(cellKey(x, y));
+      return cellStateFor(x, y, tile);
+    },
+    collectRenderCoords(),
+  );
 
   if (refit) {
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        mapZoom.fitToView();
-      });
-    });
+    // Fit synchronously when layout is ready so the first paint is not at scale=1.
+    if (!applyMapViewFit()) {
+      scheduleMapViewFit();
+    }
   }
 }
 
@@ -519,18 +577,10 @@ function handleStreamConnected(): void {
 }
 
 function cellFromPointer(event: PointerEvent): { x: number; y: number } | null {
-  const bounds = boardRenderer.getBounds() ?? latestMap?.bounds;
-  if (!bounds) {
-    return null;
-  }
   const rect = boardEl.getBoundingClientRect();
-  if (rect.width <= 0 || rect.height <= 0) {
-    return null;
-  }
-  // Map screen coords through the CSS transform into canvas pixel space.
-  const localX = ((event.clientX - rect.left) / rect.width) * boardEl.width;
-  const localY = ((event.clientY - rect.top) / rect.height) * boardEl.height;
-  return cellFromPoint(localX, localY, bounds);
+  const cssX = event.clientX - rect.left;
+  const cssY = event.clientY - rect.top;
+  return boardRenderer.hitTest(cssX, cssY);
 }
 
 function releasePaintCapture(): void {
@@ -646,6 +696,23 @@ boardViewportEl.addEventListener("touchstart", (event) => {
     releasePaintCapture();
   }
 });
+
+new ResizeObserver(() => {
+  boardRenderer.setViewportCssSize(
+    boardViewportEl.clientWidth,
+    boardViewportEl.clientHeight,
+  );
+  if (pendingViewFit) {
+    if (applyMapViewFit()) {
+      pendingViewFit = false;
+    }
+  }
+}).observe(boardViewportEl);
+
+boardRenderer.setViewportCssSize(
+  boardViewportEl.clientWidth,
+  boardViewportEl.clientHeight,
+);
 
 function scheduleStreamFlush(): void {
   if (streamFlushTimer) {

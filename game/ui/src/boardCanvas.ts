@@ -1,3 +1,4 @@
+import { computeFitTransform } from "./mapZoom.js";
 import type { BoundBox } from "./types.js";
 
 export const CELL_SIZE = 14;
@@ -10,11 +11,19 @@ export const FLAG_GOLD = "#f5c842";
 export const FLAG_POLE = "#fff8e7";
 export const FLAG_POLE_SHADOW = "#b8860b";
 
+const MAX_DEVICE_PIXEL_RATIO = 3;
+
 export interface BoardCellState {
   fill: string;
   isSelf: boolean;
   hasFlag: boolean;
   isPending: boolean;
+}
+
+export interface Camera {
+  scale: number;
+  translateX: number;
+  translateY: number;
 }
 
 export function boardPixelSize(bounds: BoundBox): { width: number; height: number } {
@@ -63,6 +72,44 @@ export function cellFromPoint(
     return null;
   }
   return { x, y };
+}
+
+/** Pixel rect covering claimed cells, padded for a comfortable default view. */
+export function claimedContentPixelRect(
+  bounds: BoundBox,
+  cells: ReadonlyArray<{ x: number; y: number }>,
+  padCells = 12,
+): { x: number; y: number; width: number; height: number } | null {
+  if (cells.length === 0) {
+    return null;
+  }
+
+  let minX = cells[0]!.x;
+  let maxX = cells[0]!.x;
+  let minY = cells[0]!.y;
+  let maxY = cells[0]!.y;
+  for (const cell of cells) {
+    if (cell.x < minX) minX = cell.x;
+    if (cell.x > maxX) maxX = cell.x;
+    if (cell.y < minY) minY = cell.y;
+    if (cell.y > maxY) maxY = cell.y;
+  }
+
+  const span = Math.max(maxX - minX, maxY - minY, 1);
+  const pad = Math.max(padCells, Math.ceil(span * 0.08));
+  minX = Math.max(bounds.min_x, minX - pad);
+  maxX = Math.min(bounds.max_x, maxX + pad);
+  minY = Math.max(bounds.min_y, minY - pad);
+  maxY = Math.min(bounds.max_y, maxY + pad);
+
+  const topLeft = cellPixelOrigin(minX, minY, bounds);
+  const bottomRight = cellPixelOrigin(maxX, maxY, bounds);
+  return {
+    x: topLeft.px,
+    y: topLeft.py,
+    width: bottomRight.px + CELL_SIZE - topLeft.px,
+    height: bottomRight.py + CELL_SIZE - topLeft.py,
+  };
 }
 
 function brightenHex(hex: string, factor: number): string {
@@ -131,6 +178,14 @@ export class BoardRenderer {
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
   private bounds: BoundBox | null = null;
+  private camera: Camera = { scale: 1, translateX: 0, translateY: 0 };
+  private viewportCssWidth = 0;
+  private viewportCssHeight = 0;
+  private devicePixelRatio = 1;
+  private cellState: ((x: number, y: number) => BoardCellState) | null = null;
+  private coords: Array<{ x: number; y: number }> = [];
+  private cellOverrides = new Map<string, BoardCellState>();
+  private redrawScheduled = false;
 
   constructor(canvas: HTMLCanvasElement) {
     const ctx = canvas.getContext("2d");
@@ -145,6 +200,47 @@ export class BoardRenderer {
     return this.bounds ? { ...this.bounds } : null;
   }
 
+  getCamera(): Camera {
+    return { ...this.camera };
+  }
+
+  setCamera(camera: Camera): void {
+    this.camera = { ...camera };
+    this.scheduleRedraw();
+  }
+
+  setViewportCssSize(width: number, height: number): void {
+    if (width <= 0 || height <= 0) {
+      return;
+    }
+    const dpr = Math.min(
+      typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1,
+      MAX_DEVICE_PIXEL_RATIO,
+    );
+    const sizeChanged =
+      this.viewportCssWidth !== width ||
+      this.viewportCssHeight !== height ||
+      this.devicePixelRatio !== dpr;
+    if (!sizeChanged) {
+      return;
+    }
+    this.viewportCssWidth = width;
+    this.viewportCssHeight = height;
+    this.devicePixelRatio = dpr;
+    this.canvas.style.width = `${width}px`;
+    this.canvas.style.height = `${height}px`;
+    this.canvas.width = Math.round(width * dpr);
+    this.canvas.height = Math.round(height * dpr);
+    this.scheduleRedraw();
+  }
+
+  fitWorldSize(): { width: number; height: number } {
+    if (!this.bounds) {
+      return { width: 0, height: 0 };
+    }
+    return boardPixelSize(this.bounds);
+  }
+
   containsCell(x: number, y: number): boolean {
     if (!this.bounds) {
       return false;
@@ -157,44 +253,110 @@ export class BoardRenderer {
     );
   }
 
-  resize(bounds: BoundBox): void {
-    const { width, height } = boardPixelSize(bounds);
-    this.canvas.width = width;
-    this.canvas.height = height;
-    this.canvas.style.width = `${width}px`;
-    this.canvas.style.height = `${height}px`;
+  renderFull(
+    bounds: BoundBox,
+    cellState: (x: number, y: number) => BoardCellState,
+    coords: Iterable<{ x: number; y: number }>,
+  ): void {
     this.bounds = { ...bounds };
-    this.ctx.fillStyle = BOARD_GAP_COLOR;
-    this.ctx.fillRect(0, 0, width, height);
+    this.cellState = cellState;
+    this.coords = [...coords];
+    this.cellOverrides.clear();
+    this.scheduleRedraw();
   }
 
   paintCell(x: number, y: number, state: BoardCellState): void {
     if (!this.bounds || !this.containsCell(x, y)) {
       return;
     }
-    const { px, py } = cellPixelOrigin(x, y, this.bounds);
-    drawCell(this.ctx, px, py, state);
+    const key = `${x},${y}`;
+    if (!this.coords.some((c) => `${c.x},${c.y}` === key)) {
+      this.coords.push({ x, y });
+    }
+    this.cellOverrides.set(key, state);
+    this.scheduleRedraw();
   }
 
-  renderFull(bounds: BoundBox, cellState: (x: number, y: number) => BoardCellState): void {
-    const sizeChanged =
-      this.bounds === null ||
-      this.bounds.min_x !== bounds.min_x ||
-      this.bounds.min_y !== bounds.min_y ||
-      this.bounds.max_x !== bounds.max_x ||
-      this.bounds.max_y !== bounds.max_y;
-    if (sizeChanged) {
-      this.resize(bounds);
-    } else {
-      const { width, height } = boardPixelSize(bounds);
-      this.ctx.fillStyle = BOARD_GAP_COLOR;
-      this.ctx.fillRect(0, 0, width, height);
+  hitTest(cssX: number, cssY: number): { x: number; y: number } | null {
+    if (!this.bounds || this.viewportCssWidth <= 0 || this.viewportCssHeight <= 0) {
+      return null;
+    }
+    const { scale, translateX, translateY } = this.camera;
+    if (scale <= 0) {
+      return null;
+    }
+    const worldX = (cssX - translateX) / scale;
+    const worldY = (cssY - translateY) / scale;
+    return cellFromPoint(worldX, worldY, this.bounds);
+  }
+
+  private scheduleRedraw(): void {
+    if (this.redrawScheduled || !this.bounds || !this.cellState) {
+      return;
+    }
+    this.redrawScheduled = true;
+    const schedule =
+      typeof requestAnimationFrame === "function"
+        ? requestAnimationFrame
+        : (callback: () => void) => {
+            callback();
+          };
+    schedule(() => {
+      this.redrawScheduled = false;
+      this.drawFrame();
+    });
+  }
+
+  private drawFrame(): void {
+    if (!this.bounds || !this.cellState) {
+      return;
+    }
+    if (this.viewportCssWidth <= 0 || this.viewportCssHeight <= 0) {
+      return;
     }
 
-    for (let y = bounds.min_y; y <= bounds.max_y; y++) {
-      for (let x = bounds.min_x; x <= bounds.max_x; x++) {
-        this.paintCell(x, y, cellState(x, y));
+    const { width, height } = boardPixelSize(this.bounds);
+
+    // If we never fitted, scale=1 shows only the top-left of a multi-thousand-px
+    // world (looks empty). Auto-fit so the first paint is usable.
+    if (
+      this.camera.scale === 1 &&
+      this.camera.translateX === 0 &&
+      this.camera.translateY === 0 &&
+      width > this.viewportCssWidth
+    ) {
+      const fit = computeFitTransform(
+        this.viewportCssWidth,
+        this.viewportCssHeight,
+        width,
+        height,
+      );
+      this.camera = {
+        scale: fit.scale,
+        translateX: fit.translateX,
+        translateY: fit.translateY,
+      };
+    }
+
+    const dpr = this.devicePixelRatio;
+    const ctx = this.ctx;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+
+    const { scale, translateX, translateY } = this.camera;
+    ctx.setTransform(scale * dpr, 0, 0, scale * dpr, translateX * dpr, translateY * dpr);
+
+    ctx.fillStyle = BOARD_GAP_COLOR;
+    ctx.fillRect(0, 0, width, height);
+
+    for (const { x, y } of this.coords) {
+      if (!this.containsCell(x, y)) {
+        continue;
       }
+      const { px, py } = cellPixelOrigin(x, y, this.bounds);
+      const key = `${x},${y}`;
+      const state = this.cellOverrides.get(key) ?? this.cellState(x, y);
+      drawCell(ctx, px, py, state);
     }
   }
 }
