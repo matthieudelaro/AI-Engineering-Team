@@ -1,12 +1,36 @@
 import { describe, expect, it } from "vitest";
 import {
+  BOARD_GAP_COLOR,
   boardPixelSize,
   BoardRenderer,
   cellFromPoint,
+  cellFromPointNearest,
   cellPixelOrigin,
   CELL_GAP,
   CELL_SIZE,
+  EMPTY_FILL,
+  PENDING_EMPTY_FILL,
 } from "./boardCanvas.js";
+
+describe("pending empty contrast", () => {
+  it("uses a pending fill that is not the board gap color", () => {
+    expect(PENDING_EMPTY_FILL.toLowerCase()).not.toBe(BOARD_GAP_COLOR.toLowerCase());
+    expect(PENDING_EMPTY_FILL.toLowerCase()).not.toBe(EMPTY_FILL.toLowerCase());
+  });
+});
+
+describe("cellFromPointNearest", () => {
+  const bounds = { min_x: 0, min_y: 0, max_x: 1, max_y: 1 };
+
+  it("matches cellFromPoint inside a cell", () => {
+    expect(cellFromPointNearest(0, 0, bounds)).toEqual(cellFromPoint(0, 0, bounds));
+  });
+
+  it("snaps gap pixels to a neighboring cell instead of null", () => {
+    expect(cellFromPoint(CELL_SIZE, 0, bounds)).toBeNull();
+    expect(cellFromPointNearest(CELL_SIZE, 0, bounds)).toEqual({ x: 0, y: 0 });
+  });
+});
 
 describe("boardPixelSize", () => {
   it("sizes a single cell without extra gap", () => {

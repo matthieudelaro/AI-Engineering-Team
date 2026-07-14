@@ -10,6 +10,9 @@ export const SELF_OUTLINE = "#ffffff";
 export const FLAG_GOLD = "#f5c842";
 export const FLAG_POLE = "#fff8e7";
 export const FLAG_POLE_SHADOW = "#b8860b";
+/** Pending claim on an unknown/empty cell — must contrast with BOARD_GAP_COLOR. */
+export const PENDING_EMPTY_FILL = "#5c8eb8";
+export const PENDING_OUTLINE = "#ffe566";
 
 const MAX_DEVICE_PIXEL_RATIO = 3;
 
@@ -72,6 +75,32 @@ export function cellFromPoint(
     return null;
   }
   return { x, y };
+}
+
+/**
+ * Like cellFromPoint, but maps inter-cell gap pixels to the nearest cell so
+ * paint strokes over fog/empty areas still register.
+ */
+export function cellFromPointNearest(
+  px: number,
+  py: number,
+  bounds: BoundBox,
+): { x: number; y: number } | null {
+  const exact = cellFromPoint(px, py, bounds);
+  if (exact) {
+    return exact;
+  }
+
+  const { width, height } = boardPixelSize(bounds);
+  if (px < 0 || py < 0 || px >= width || py >= height) {
+    return null;
+  }
+
+  const maxCol = bounds.max_x - bounds.min_x;
+  const maxRow = bounds.max_y - bounds.min_y;
+  const col = Math.min(maxCol, Math.max(0, Math.floor(px / CELL_STRIDE)));
+  const row = Math.min(maxRow, Math.max(0, Math.floor(py / CELL_STRIDE)));
+  return { x: bounds.min_x + col, y: bounds.min_y + row };
 }
 
 /** Pixel rect covering claimed cells, padded for a comfortable default view. */
@@ -159,12 +188,24 @@ export function drawCell(
   py: number,
   state: BoardCellState,
 ): void {
-  const fill = state.isPending ? brightenHex(state.fill, 1.35) : state.fill;
+  const isEmptyBase = state.fill === EMPTY_FILL;
+  let fill = state.fill;
+  if (state.isPending) {
+    // Brightening empty/unknown toward gap color makes pending invisible; use a
+    // dedicated fill so fog / unexplored claims still show feedback.
+    fill = isEmptyBase ? PENDING_EMPTY_FILL : brightenHex(state.fill, 1.35);
+  }
   ctx.fillStyle = fill;
   ctx.fillRect(px, py, CELL_SIZE, CELL_SIZE);
 
   if (state.isSelf) {
     ctx.strokeStyle = SELF_OUTLINE;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(px + 1, py + 1, CELL_SIZE - 2, CELL_SIZE - 2);
+  }
+
+  if (state.isPending) {
+    ctx.strokeStyle = PENDING_OUTLINE;
     ctx.lineWidth = 2;
     ctx.strokeRect(px + 1, py + 1, CELL_SIZE - 2, CELL_SIZE - 2);
   }
@@ -287,7 +328,7 @@ export class BoardRenderer {
     }
     const worldX = (cssX - translateX) / scale;
     const worldY = (cssY - translateY) / scale;
-    return cellFromPoint(worldX, worldY, this.bounds);
+    return cellFromPointNearest(worldX, worldY, this.bounds);
   }
 
   private scheduleRedraw(): void {
