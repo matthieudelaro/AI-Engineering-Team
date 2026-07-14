@@ -1,0 +1,24 @@
+{
+  "upstreamBaseUrl": "${GAME_API_URL}",
+  "authHeader": "${GAME_API_AUTH_HEADER}",
+  "stateEndpoints": [
+    {
+      "key": "flags",
+      "method": "GET",
+      "path": "/api/v1/flags?game_id=${GAME_ID}",
+      "limitKey": "get_flags"
+    },
+    {
+      "key": "map",
+      "method": "GET",
+      "path": "/api/v1/map?game_id=${GAME_ID}",
+      "limitKey": "get_map"
+    },
+    {
+      "key": "leaderboard",
+      "method": "GET",
+      "path": "/api/v1/leaderboard?game_id=${GAME_ID}",
+      "limitKey": "get_leaderboard"
+    }
+  ]
+}

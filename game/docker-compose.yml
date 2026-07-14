@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:1.15
+    pull_policy: never
+    container_name: game-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: game
+      POSTGRES_PASSWORD: game
+      POSTGRES_DB: game
+    ports:
+      - "5432:5432"
+    volumes:
+      - game_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U game -d game"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  game_pg_data:

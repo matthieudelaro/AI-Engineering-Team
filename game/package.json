@@ -1,0 +1,40 @@
+{
+  "name": "game",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down",
+    "db:migrate": "tsx src/db/migrate.ts",
+    "gateway": "tsx src/cli.ts gateway",
+    "pollers": "tsx src/cli.ts pollers",
+    "jobs": "tsx src/cli.ts jobs",
+    "start": "tsx src/cli.ts start",
+    "status": "tsx src/cli.ts status",
+    "policy": "tsx src/cli.ts policy",
+    "play": "tsx src/policies/worker-entry.ts 002-autoplay",
+    "ui": "vite --config ui/vite.config.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "drizzle-orm": "^0.39.3",
+    "fastify": "^5.2.1",
+    "pg": "^8.13.3",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "@types/pg": "^8.11.11",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2",
+    "vite": "^6.2.2",
+    "vitest": "^3.0.8"
+  }
+}

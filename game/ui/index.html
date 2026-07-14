@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AgentWars Map</title>
+  </head>
+  <body>
+    <div id="app">
+      <header class="toolbar">
+        <h1>AgentWars</h1>
+        <div class="stats" id="stats">Loading…</div>
+        <div class="status" id="status"></div>
+      </header>
+      <main class="main-layout">
+        <aside class="api-console-panel" aria-label="API console">
+          <h2>API</h2>
+          <div id="api-console" class="api-console"></div>
+        </aside>
+        <section class="board-wrap">
+          <div id="board" class="board" role="grid" aria-label="Game map"></div>
+        </section>
+        <aside class="leaderboard-panel" aria-label="Leaderboard">
+          <h2>Leaderboard</h2>
+          <ol id="leaderboard" class="leaderboard-list"></ol>
+        </aside>
+      </main>
+      <footer class="hint">
+        <span>Click or click-drag to claim tiles. Background autoplay runs via <code>npm run jobs</code> (gateway-audited).</span>
+        <span class="legend" aria-label="Map legend">
+          <span class="legend-item">
+            <span class="legend-swatch legend-tile" aria-hidden="true"></span>
+            Tile
+          </span>
+          <span class="legend-item">
+            <span class="legend-swatch legend-flag" aria-hidden="true"></span>
+            Flag
+          </span>
+        </span>
+      </footer>
+      <aside id="rate-panel" class="rate-panel" aria-label="API rate usage"></aside>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
