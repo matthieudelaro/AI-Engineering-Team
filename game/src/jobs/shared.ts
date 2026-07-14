@@ -3,6 +3,7 @@ import { getGatewayBaseUrl, type Env } from "../config.js";
 import { GameClient } from "../client/gameClient.js";
 import type { Database } from "../db/index.js";
 import { gameStates, policyEvents } from "../db/schema.js";
+import { pickUsableCachedRow } from "../state/usablePayload.js";
 import {
   fetchMethodLimits,
   pollIntervalMsForRps,
@@ -294,8 +295,9 @@ export async function readLatestState<T>(
     .from(gameStates)
     .where(eq(gameStates.endpointKey, endpointKey))
     .orderBy(desc(gameStates.fetchedAt))
-    .limit(1);
-  return (rows[0]?.payloadJson as T | undefined) ?? null;
+    .limit(20);
+  const row = pickUsableCachedRow(endpointKey, rows);
+  return (row?.payloadJson as T | undefined) ?? null;
 }
 
 export interface SelfContext {

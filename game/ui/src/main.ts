@@ -28,6 +28,11 @@ import {
 import { UiClaimBatcher } from "./uiClaimBatch.js";
 import { PLAYER_ID } from "./config.js";
 import { RateBudget } from "./rateBudget.js";
+import {
+  BoardRenderer,
+  cellFromPoint,
+  type BoardCellState,
+} from "./boardCanvas.js";
 import type { BoundBox, LeaderboardEntry, MapResponse, PlayerColors, Tile } from "./types.js";
 
 const LEADERBOARD_POLL_MS = 3000;
@@ -36,14 +41,26 @@ const MAP_SYNC_MS = 5000;
 const statsEl = document.getElementById("stats");
 const statusEl = document.getElementById("status");
 const boardEl = document.getElementById("board");
+const boardErrorEl = document.getElementById("board-error");
 const boardViewportEl = document.getElementById("board-viewport");
 const leaderboardEl = document.getElementById("leaderboard");
 const apiConsoleEl = document.getElementById("api-console");
 const ratePanelEl = document.getElementById("rate-panel");
 
-if (!statsEl || !statusEl || !boardEl || !boardViewportEl || !leaderboardEl || !apiConsoleEl || !ratePanelEl) {
+if (
+  !statsEl ||
+  !statusEl ||
+  !(boardEl instanceof HTMLCanvasElement) ||
+  !boardErrorEl ||
+  !boardViewportEl ||
+  !leaderboardEl ||
+  !apiConsoleEl ||
+  !ratePanelEl
+) {
   throw new Error("missing DOM elements");
 }
+
+const boardRenderer = new BoardRenderer(boardEl);
 
 const mapZoom = initMapZoom(boardViewportEl, boardEl, {
   onPinchStart: () => {
@@ -234,6 +251,37 @@ function colorForTile(tile: Tile | undefined): string {
   return ownershipColor(tile.ownership, playerColors) ?? "#5b6b82";
 }
 
+function cellStateFor(x: number, y: number, tile: Tile | undefined): BoardCellState {
+  const owner = tile ? ownershipName(tile.ownership) : null;
+  return {
+    fill: colorForTile(tile),
+    isSelf: isSelfOwner(owner, playerColors.selfName, PLAYER_ID),
+    hasFlag: tile?.has_flag ?? false,
+    isPending: pendingCells.has(cellKey(x, y)),
+  };
+}
+
+function cellTitle(x: number, y: number, tile: Tile | undefined): string {
+  const owner = tile ? ownershipName(tile.ownership) : null;
+  if (tile?.has_flag) {
+    return `${owner ?? "unknown"} — flag (${x}, ${y})`;
+  }
+  if (owner) {
+    return `${owner} (${x}, ${y})`;
+  }
+  return `empty (${x}, ${y})`;
+}
+
+function hideBoardError(): void {
+  boardErrorEl.hidden = true;
+  boardErrorEl.textContent = "";
+}
+
+function showBoardError(message: string): void {
+  boardErrorEl.textContent = `Cannot load map: ${message}`;
+  boardErrorEl.hidden = false;
+}
+
 function clearPendingIfResolved(x: number, y: number, tile: Tile | undefined): void {
   if (!pendingCells.has(cellKey(x, y))) {
     return;
@@ -245,68 +293,20 @@ function clearPendingIfResolved(x: number, y: number, tile: Tile | undefined): v
 }
 
 function updateCell(x: number, y: number, tile: Tile | undefined): boolean {
-  const cell = boardEl.querySelector<HTMLElement>(
-    `.cell[data-x="${x}"][data-y="${y}"]`,
-  );
-  if (!cell) {
+  if (!boardRenderer.containsCell(x, y)) {
     return false;
   }
-
-  const owner = tile ? ownershipName(tile.ownership) : null;
   clearPendingIfResolved(x, y, tile);
-  cell.classList.toggle("empty", !owner);
-  cell.classList.toggle("self", isSelfOwner(owner, playerColors.selfName, PLAYER_ID));
-  cell.classList.toggle("flag", tile?.has_flag ?? false);
-  cell.classList.toggle("pending", pendingCells.has(cellKey(x, y)));
-  cell.style.backgroundColor = colorForTile(tile);
-  cell.title = tile?.has_flag
-    ? `${owner ?? "unknown"} — flag (${x}, ${y})`
-    : owner
-      ? `${owner} (${x}, ${y})`
-      : `empty (${x}, ${y})`;
+  boardRenderer.paintCell(x, y, cellStateFor(x, y, tile));
   return true;
 }
 
 function renderBoard(map: MapResponse, refit = false): void {
-  const { min_x, min_y, max_x, max_y } = map.bounds;
-  const width = max_x - min_x + 1;
-  const height = max_y - min_y + 1;
-
-  boardEl.style.gridTemplateColumns = `repeat(${width}, 14px)`;
-  boardEl.replaceChildren();
-
-  for (let y = min_y; y <= max_y; y++) {
-    for (let x = min_x; x <= max_x; x++) {
-      const tile = tileIndex.get(cellKey(x, y));
-      const owner = tile ? ownershipName(tile.ownership) : null;
-      const cell = document.createElement("div");
-      cell.className = "cell";
-      cell.dataset.x = String(x);
-      cell.dataset.y = String(y);
-      cell.setAttribute("role", "gridcell");
-      cell.title = tile?.has_flag
-        ? `${owner ?? "unknown"} — flag (${x}, ${y})`
-        : owner
-          ? `${owner} (${x}, ${y})`
-          : `empty (${x}, ${y})`;
-
-      if (!owner) {
-        cell.classList.add("empty");
-      }
-      if (isSelfOwner(owner, playerColors.selfName, PLAYER_ID)) {
-        cell.classList.add("self");
-      }
-      if (tile?.has_flag) {
-        cell.classList.add("flag");
-      }
-      if (pendingCells.has(cellKey(x, y))) {
-        cell.classList.add("pending");
-      }
-
-      cell.style.backgroundColor = colorForTile(tile);
-      boardEl.appendChild(cell);
-    }
-  }
+  hideBoardError();
+  boardRenderer.renderFull(map.bounds, (x, y) => {
+    const tile = tileIndex.get(cellKey(x, y));
+    return cellStateFor(x, y, tile);
+  });
 
   if (refit) {
     requestAnimationFrame(() => {
@@ -326,10 +326,8 @@ function isOwnTile(x: number, y: number): boolean {
 }
 
 function markCellPending(x: number, y: number): void {
-  const cell = boardEl.querySelector<HTMLElement>(
-    `.cell[data-x="${x}"][data-y="${y}"]`,
-  );
-  cell?.classList.add("pending");
+  const tile = tileIndex.get(cellKey(x, y));
+  boardRenderer.paintCell(x, y, cellStateFor(x, y, tile));
 }
 
 function tryClaimOne(x: number, y: number): void {
@@ -478,17 +476,14 @@ async function refreshMap(): Promise<void> {
 
     applyMapSnapshot(map, meta);
 
+    hideBoardError();
     if (!mapStreamOffline) {
       setStatus("");
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "map error";
     if (!latestMap) {
-      boardEl.replaceChildren();
-      const err = document.createElement("div");
-      err.className = "board-error";
-      err.textContent = `Cannot load map: ${message}`;
-      boardEl.appendChild(err);
+      showBoardError(message);
       setStatus(message);
     } else {
       updateStats();
@@ -524,22 +519,18 @@ function handleStreamConnected(): void {
 }
 
 function cellFromPointer(event: PointerEvent): { x: number; y: number } | null {
-  const target = document.elementFromPoint(event.clientX, event.clientY);
-  return cellFromTarget(target);
-}
-
-function cellFromTarget(target: EventTarget | null): { x: number; y: number } | null {
-  if (!(target instanceof HTMLElement)) {
+  const bounds = boardRenderer.getBounds() ?? latestMap?.bounds;
+  if (!bounds) {
     return null;
   }
-  const cell = target.closest<HTMLElement>(".cell");
-  if (!cell?.dataset.x || !cell.dataset.y) {
+  const rect = boardEl.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) {
     return null;
   }
-  return {
-    x: Number.parseInt(cell.dataset.x, 10),
-    y: Number.parseInt(cell.dataset.y, 10),
-  };
+  // Map screen coords through the CSS transform into canvas pixel space.
+  const localX = ((event.clientX - rect.left) / rect.width) * boardEl.width;
+  const localY = ((event.clientY - rect.top) / rect.height) * boardEl.height;
+  return cellFromPoint(localX, localY, bounds);
 }
 
 function releasePaintCapture(): void {
@@ -605,7 +596,17 @@ boardEl.addEventListener("pointerdown", (event) => {
 });
 
 boardEl.addEventListener("pointermove", (event) => {
-  if (!painting || mapZoom.isPinching()) {
+  if (!painting) {
+    const pos = cellFromPointer(event);
+    if (pos) {
+      const tile = tileIndex.get(cellKey(pos.x, pos.y));
+      boardEl.title = cellTitle(pos.x, pos.y, tile);
+    } else {
+      boardEl.removeAttribute("title");
+    }
+    return;
+  }
+  if (mapZoom.isPinching()) {
     return;
   }
   const pos = cellFromPointer(event);

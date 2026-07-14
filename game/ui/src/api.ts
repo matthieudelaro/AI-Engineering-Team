@@ -12,6 +12,41 @@ import { formatCacheAge } from "./cacheAge.js";
 
 export { formatCacheAge } from "./cacheAge.js";
 
+function isApiErrorPayload(payload: unknown): boolean {
+  return (
+    typeof payload === "object" &&
+    payload !== null &&
+    !Array.isArray(payload) &&
+    typeof (payload as { error?: unknown }).error === "string"
+  );
+}
+
+function assertUsableLeaderboard(data: unknown): asserts data is LeaderboardResponse {
+  if (isApiErrorPayload(data)) {
+    throw new Error("leaderboard cache miss: API error payload");
+  }
+  if (
+    typeof data !== "object" ||
+    data === null ||
+    !Array.isArray((data as LeaderboardResponse).entries)
+  ) {
+    throw new Error("leaderboard cache miss: payload lacks entries");
+  }
+}
+
+function assertUsableFlags(data: unknown): asserts data is FlagsResponse {
+  if (isApiErrorPayload(data)) {
+    throw new Error("flags cache miss: API error payload");
+  }
+  if (
+    typeof data !== "object" ||
+    data === null ||
+    !Array.isArray((data as FlagsResponse).flags)
+  ) {
+    throw new Error("flags cache miss: payload lacks flags");
+  }
+}
+
 const GAME_API_BASE = `${GATEWAY_BASE_URL}/api/v1`;
 
 let rateBudget: RateBudget | null = null;
@@ -310,11 +345,17 @@ export function fetchLeaderboard(): Promise<{
   data: LeaderboardResponse;
   meta: CachedReadMeta;
 }> {
-  return readCachedState<LeaderboardResponse>("leaderboard");
+  return readCachedState<LeaderboardResponse>("leaderboard").then((result) => {
+    assertUsableLeaderboard(result.data);
+    return result;
+  });
 }
 
 export function fetchFlags(): Promise<{ data: FlagsResponse; meta: CachedReadMeta }> {
-  return readCachedState<FlagsResponse>("flags");
+  return readCachedState<FlagsResponse>("flags").then((result) => {
+    assertUsableFlags(result.data);
+    return result;
+  });
 }
 
 export function ownershipName(

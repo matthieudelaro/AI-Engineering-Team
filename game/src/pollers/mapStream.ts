@@ -4,6 +4,7 @@ import { getGatewayBaseUrl } from "../config.js";
 import { GameClient } from "../client/gameClient.js";
 import type { Database } from "../db/index.js";
 import { gameStates, policyEvents } from "../db/schema.js";
+import { isUsableGameStatePayload } from "../state/usablePayload.js";
 
 export interface MapTile {
   x: number;
@@ -195,7 +196,7 @@ async function persistMapState(
   previousHash: string | null,
 ): Promise<string> {
   const payload = mapStateToResponse(state);
-  if (payload.tiles.length === 0) {
+  if (payload.tiles.length === 0 || !isUsableGameStatePayload("map", payload)) {
     return previousHash ?? hashPayload(payload);
   }
   const payloadHash = hashPayload(payload);

@@ -11,6 +11,7 @@ import {
   type MethodLimitsResponse,
 } from "./methodLimits.js";
 import { TokenBucketRateLimiter } from "./rateLimiter.js";
+import { isUsableGameStatePayload } from "../state/usablePayload.js";
 import { startMapStream } from "./mapStream.js";
 
 export interface PollerHandle {
@@ -93,21 +94,34 @@ async function pollEndpoint(
       payload = { raw: response.body };
     }
 
-    const payloadHash = hashPayload(payload);
-    const latest = await db
-      .select()
-      .from(gameStates)
-      .where(eq(gameStates.endpointKey, endpointKey))
-      .orderBy(desc(gameStates.fetchedAt))
-      .limit(1);
+    const statusOk = response.status >= 200 && response.status < 300;
+    const usable = statusOk && isUsableGameStatePayload(endpointKey, payload);
 
-    const previous = latest[0];
-    if (!previous || previous.etagOrHash !== payloadHash) {
-      await db.insert(gameStates).values({
-        endpointKey,
-        payloadJson: payload,
-        etagOrHash: payloadHash,
-      });
+    if (!usable) {
+      await logPollerEvent(
+        db,
+        "warn",
+        "poll_skip_unusable",
+        `skipped storing unusable payload for ${endpointKey}`,
+        { endpointKey, status: response.status },
+      );
+    } else {
+      const payloadHash = hashPayload(payload);
+      const latest = await db
+        .select()
+        .from(gameStates)
+        .where(eq(gameStates.endpointKey, endpointKey))
+        .orderBy(desc(gameStates.fetchedAt))
+        .limit(1);
+
+      const previous = latest[0];
+      if (!previous || previous.etagOrHash !== payloadHash) {
+        await db.insert(gameStates).values({
+          endpointKey,
+          payloadJson: payload,
+          etagOrHash: payloadHash,
+        });
+      }
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown poll error";
