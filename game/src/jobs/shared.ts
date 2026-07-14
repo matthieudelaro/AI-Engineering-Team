@@ -70,32 +70,46 @@ export function buildOwnershipMap(
   return { owned, occupied };
 }
 
-/** Cells we already own or have reserved for an in-flight place-tile. */
+/**
+ * Cells we must not place-tile on: already owned by us, reserved in-flight,
+ * or occupied by another player (those return INVALID_TARGET and burn budget).
+ */
 export function blockedClaimCells(
   owned: Set<string>,
   pending?: Set<string>,
+  occupied?: Map<string, string | null>,
+  selfName?: string | null,
 ): Set<string> {
-  if (!pending || pending.size === 0) {
-    return owned;
-  }
   const blocked = new Set(owned);
-  for (const key of pending) {
-    blocked.add(key);
+  if (pending) {
+    for (const key of pending) {
+      blocked.add(key);
+    }
+  }
+  if (occupied) {
+    for (const [key, owner] of occupied) {
+      if (owner && owner !== selfName) {
+        blocked.add(key);
+      }
+    }
   }
   return blocked;
 }
 
-/** Split tiles into ones we still need to claim vs ones we already own (local map). */
+/** Split tiles into ones we still need to claim vs ones to ack (owned or foreign). */
 export function partitionBySelfOwnership<T extends { x: number; y: number }>(
   tiles: T[],
   map: MapResponse,
   selfName: string | null,
 ): { claimable: T[]; alreadyOwned: T[] } {
-  const { owned } = buildOwnershipMap(map.tiles, selfName);
+  const { owned, occupied } = buildOwnershipMap(map.tiles, selfName);
   const claimable: T[] = [];
   const alreadyOwned: T[] = [];
   for (const tile of tiles) {
-    if (owned.has(`${tile.x},${tile.y}`)) {
+    const key = `${tile.x},${tile.y}`;
+    const owner = occupied.get(key);
+    if (owned.has(key) || (owner && owner !== selfName)) {
+      // Own tiles and foreign tiles are not claimable — ack out of the UI queue.
       alreadyOwned.push(tile);
     } else {
       claimable.push(tile);
@@ -169,8 +183,9 @@ export function pickBridgeStepToward(
   if (!selfName || targets.length === 0) {
     return null;
   }
-  const owned = ownedSet ?? buildOwnershipMap(map.tiles, selfName).owned;
-  const blocked = blockedClaimCells(owned, pendingSet);
+  const { owned: ownedFromMap, occupied } = buildOwnershipMap(map.tiles, selfName);
+  const owned = ownedSet ?? ownedFromMap;
+  const blocked = blockedClaimCells(owned, pendingSet, occupied, selfName);
   const targetKeys = new Set(targets.map((t) => `${t.x},${t.y}`));
   let best: { x: number; y: number; score: number } | null = null;
 
@@ -326,17 +341,16 @@ export async function createPlaceTileLimiter(
   const client = new GameClient(env, { source: "job" });
   const limits = await fetchMethodLimits(client, env.GAME_ID);
   const placeRps = Math.max(1, limits?.place_tile?.max_per_sec ?? 20);
-  // Pace just under the API cap so steady-state rarely trips RATE_LIMITED.
-  // Small burst avoids a stampede after pause; refill sustains pacedRps.
-  const pacedRps = Math.max(1, placeRps - 1);
-  const burst = Math.min(4, pacedRps);
-  return new TokenBucketRateLimiter(pacedRps, burst);
+  // Stay under the API's per-second fixed window. The limiter also caps starts
+  // per wall-clock second and waits for the next second instead of 429'ing.
+  const pacedRps = Math.max(1, placeRps - 2);
+  return new TokenBucketRateLimiter(pacedRps, 1, 8, 400);
 }
 
 /**
- * Parallel place-tile workers. Sized for ~1s RTT at ~20/s (20 × 1s ≈ 20 in flight).
+ * Parallel place-tile workers. Sized for ~19/s × ~0.9s RTT ≈ 17 in flight.
  */
-export const PLACE_TILE_WORKER_COUNT = 25;
+export const PLACE_TILE_WORKER_COUNT = 18;
 
 /** @deprecated Use PLACE_TILE_WORKER_COUNT */
 export const PLACE_TILE_MAX_IN_FLIGHT = PLACE_TILE_WORKER_COUNT;
@@ -377,13 +391,22 @@ export function msUntilRateLimitReset(
   retryAfterSec?: number,
   nowMs: number = Date.now(),
 ): number {
+  const msToNextWallSec = 1000 - (nowMs % 1000) + 50;
   if (typeof resetUnixSec === "number" && Number.isFinite(resetUnixSec) && resetUnixSec > 0) {
-    return Math.max(50, resetUnixSec * 1000 - nowMs + 25);
+    const untilReset = resetUnixSec * 1000 - nowMs + 50;
+    // API often sets X-RateLimit-Reset to the *current* unix second while the
+    // window is still closed. A past/near-zero wait must advance to the next
+    // wall-clock second or we immediate-retry into another 429.
+    return Math.max(msToNextWallSec, untilReset);
   }
-  if (typeof retryAfterSec === "number" && retryAfterSec > 0) {
-    return retryAfterSec * 1000;
+  // API often returns retry_after: 0 meaning "window edge / retry ASAP".
+  if (typeof retryAfterSec === "number" && Number.isFinite(retryAfterSec)) {
+    if (retryAfterSec <= 0) {
+      return msToNextWallSec;
+    }
+    return Math.max(50, retryAfterSec * 1000);
   }
-  return 1000;
+  return msToNextWallSec;
 }
 
 function parseRateLimitHeaders(headers: Headers): {

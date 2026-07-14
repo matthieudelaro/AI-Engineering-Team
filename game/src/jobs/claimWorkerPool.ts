@@ -204,12 +204,9 @@ class UiClaimAllocator {
         return this.pickTaskLocked();
       }
 
-      if (this.activeClaims > 0) {
-        return null;
-      }
-
-      if (this.nextIndex < this.work.length) {
-        this.done = true;
+      // In-flight reservations (pending) or active workers may open adjacency
+      // shortly — keep the pool alive instead of marking done.
+      if (this.activeClaims > 0 || this.pendingClaims.size > 0) {
         return null;
       }
 
@@ -258,10 +255,9 @@ class UiClaimAllocator {
       };
     }
 
-    if (this.activeClaims > 0) {
-      return null;
-    }
-
+    // Bridge steps are always orthogonally adjacent to owned land (and
+    // reserved via pendingClaims), so multiple workers can expand in parallel.
+    // Serializing on activeClaims===0 capped UI-queue drain at ~1 claim/RTT.
     const remaining = this.work.slice(this.nextIndex);
     const bridge = pickBridgeStepToward(
       this.map,
@@ -340,6 +336,9 @@ async function runClaimTask(
       return { placed: false, rateLimitWaitMs };
     }
 
+    // Proactive throttle from X-RateLimit-Remaining (before we hit 0).
+    ctx.limiter.noteRemaining(result.rateLimitRemaining);
+
     const outcome = resolvePlaceTileOutcome(
       result,
       current.fromUiQueue,
@@ -347,7 +346,7 @@ async function runClaimTask(
     );
 
     if (outcome.action === "retry_rate_limit") {
-      // Coordinated pause — do not sleep per-worker (that stampeded and capped ~10/s).
+      // Coordinated pause + soft resume (4/s for 1s) — avoids 25-worker stampede.
       ctx.limiter.pauseFor(outcome.waitMs);
       rateLimitWaitMs = Math.max(rateLimitWaitMs, outcome.waitMs);
       await logJobEvent(
@@ -397,12 +396,9 @@ async function runClaimTask(
       fromUiQueue: current.fromUiQueue,
     });
     if (current.fromUiQueue && allocator) {
-      // Keep INVALID_TARGET in the queue until the frontier reaches it.
-      if (isInvalidTarget(result.rejected?.reason)) {
-        allocator.requeueTile(current.x, current.y);
-      } else {
-        allocator.ackTile(current.x, current.y);
-      }
+      // INVALID_TARGET after an adjacent/bridge attempt will not become valid by
+      // requeueing immediately — that just burns rate limit. Ack and drop.
+      allocator.ackTile(current.x, current.y);
     }
     releasePending(ctx, current.x, current.y);
     return { placed: false, rateLimitWaitMs };
@@ -471,9 +467,13 @@ export async function runUiQueueWorkers(
   return { delayMs, placed };
 }
 
+/** Refresh map/DB context this often; pool stays up between frontier waves. */
+const AUTO_TICK_MAX_MS = 5_000;
+
 class AutoClaimAllocator {
   private chain = Promise.resolve();
   private stop = false;
+  private readonly startedAt = Date.now();
 
   constructor(
     private readonly map: MapResponse,
@@ -498,6 +498,11 @@ class AutoClaimAllocator {
       if (this.stop) {
         return null;
       }
+      // Periodic tick restart keeps the postgres map snapshot fresh.
+      if (Date.now() - this.startedAt >= AUTO_TICK_MAX_MS) {
+        this.stop = true;
+        return null;
+      }
       if (await this.shouldStop()) {
         this.stop = true;
         return null;
@@ -512,6 +517,12 @@ class AutoClaimAllocator {
           this.pendingClaims,
         );
         if (!target) {
+          // Frontier may be fully reserved by in-flight claims. New adjacency
+          // opens when those complete — idle instead of killing the pool
+          // (that was causing ~18-ok spikes then multi-second gaps).
+          if (this.pendingClaims.size > 0) {
+            return null;
+          }
           this.stop = true;
           return null;
         }
@@ -528,6 +539,9 @@ class AutoClaimAllocator {
         };
       }
 
+      if (this.pendingClaims.size > 0) {
+        return null;
+      }
       this.stop = true;
       return null;
     });
@@ -548,7 +562,12 @@ async function autoClaimWorker(
   while (!allocator.isStopped()) {
     const task = await allocator.acquireTask();
     if (!task) {
-      break;
+      if (allocator.isStopped()) {
+        break;
+      }
+      // Wait for in-flight claims to open new frontier cells.
+      await sleep(ALLOC_IDLE_MS);
+      continue;
     }
 
     const result = await runClaimTask(ctx, task, null);

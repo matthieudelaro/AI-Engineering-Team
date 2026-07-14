@@ -21,14 +21,26 @@ describe("msUntilRateLimitReset", () => {
   it("uses X-RateLimit-Reset unix timestamp when present", () => {
     const now = 1_700_000_000_000;
     const resetSec = Math.floor(now / 1000) + 2;
-    expect(msUntilRateLimitReset(resetSec, 1, now)).toBe(2000 + 25);
+    expect(msUntilRateLimitReset(resetSec, 1, now)).toBe(2000 + 50);
   });
 
   it("falls back to retry_after seconds", () => {
     expect(msUntilRateLimitReset(undefined, 3, 0)).toBe(3000);
   });
 
-  it("defaults to 1s when nothing is provided", () => {
-    expect(msUntilRateLimitReset(undefined, undefined, 0)).toBe(1000);
+  it("waits until the next wall-clock second when reset is already elapsed", () => {
+    const now = 1_700_000_000_400; // 400ms into the second
+    const resetSec = Math.floor(now / 1000); // current second
+    expect(msUntilRateLimitReset(resetSec, 0, now)).toBe(1000 - 400 + 50);
+  });
+
+  it("treats retry_after: 0 as wait-until-next-second", () => {
+    const now = 1_700_000_000_200;
+    expect(msUntilRateLimitReset(undefined, 0, now)).toBe(1000 - 200 + 50);
+  });
+
+  it("defaults to wait-until-next-second when nothing is provided", () => {
+    const now = 1_700_000_000_100;
+    expect(msUntilRateLimitReset(undefined, undefined, now)).toBe(1000 - 100 + 50);
   });
 });

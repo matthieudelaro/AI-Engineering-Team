@@ -3,13 +3,39 @@ export class TokenBucketRateLimiter {
   private lastRefillMs: number;
   /** Wall-clock ms; acquire blocks until this time after a rate-limit pause. */
   private pausedUntilMs = 0;
+  /** After a pause, use reduced RPS until this time to avoid stampede. */
+  private softResumeUntilMs = 0;
+  private softResumeRps: number | null = null;
+  /** Aligns with typical API fixed windows (starts per unix second). */
+  private windowSec = -1;
+  private windowStarts = 0;
 
   constructor(
     private readonly maxRps: number,
     private readonly burst: number = 1,
+    /** RPS cap during soft-resume window after pauseFor. */
+    private readonly softResumeRpsDefault: number = 4,
+    /** How long soft-resume lasts after pause ends. */
+    private readonly softResumeMs: number = 1000,
   ) {
     this.tokens = burst;
     this.lastRefillMs = Date.now();
+  }
+
+  private effectiveRps(now: number = Date.now()): number {
+    if (now < this.softResumeUntilMs && this.softResumeRps !== null) {
+      return this.softResumeRps;
+    }
+    return this.maxRps;
+  }
+
+  private syncWindow(now: number): number {
+    const sec = Math.floor(now / 1000);
+    if (sec !== this.windowSec) {
+      this.windowSec = sec;
+      this.windowStarts = 0;
+    }
+    return Math.max(1, Math.floor(this.effectiveRps(now)));
   }
 
   private refill(): void {
@@ -19,7 +45,8 @@ export class TokenBucketRateLimiter {
       return;
     }
     const elapsed = (now - this.lastRefillMs) / 1000;
-    const added = elapsed * this.maxRps;
+    const rps = this.effectiveRps(now);
+    const added = elapsed * rps;
     this.tokens = Math.min(this.burst, this.tokens + added);
     this.lastRefillMs = now;
   }
@@ -42,20 +69,34 @@ export class TokenBucketRateLimiter {
       if (this.tryAcquire()) {
         return;
       }
+      const cap = this.syncWindow(Date.now());
+      if (this.windowStarts >= cap) {
+        // Wait for the next wall-clock second instead of 429'ing the API.
+        const msToNextSec = 1000 - (Date.now() % 1000) + 1;
+        await new Promise((resolve) => setTimeout(resolve, msToNextSec));
+        continue;
+      }
       this.refill();
-      const waitMs = Math.ceil((1 - this.tokens) / this.maxRps * 1000);
+      const rps = this.effectiveRps();
+      const waitMs = Math.ceil((1 - this.tokens) / rps * 1000);
       // Floor at 5ms so we can actually approach maxRps (50ms floor capped us).
       await new Promise((resolve) => setTimeout(resolve, Math.max(waitMs, 5)));
     }
   }
 
   tryAcquire(): boolean {
-    if (Date.now() < this.pausedUntilMs) {
+    const now = Date.now();
+    if (now < this.pausedUntilMs) {
+      return false;
+    }
+    const cap = this.syncWindow(now);
+    if (this.windowStarts >= cap) {
       return false;
     }
     this.refill();
     if (this.tokens >= 1) {
       this.tokens -= 1;
+      this.windowStarts += 1;
       return true;
     }
     return false;
@@ -70,11 +111,51 @@ export class TokenBucketRateLimiter {
   /**
    * Coordinated backoff: zero the bucket and block all acquires until `waitMs`
    * elapses. Repeated calls extend to the latest deadline (no stampede sleeps).
+   * Short pauses soft-resume; long waits (into the next API window) resume at
+   * full paced RPS so we don't spend an extra second at 4–8/s.
    */
   pauseFor(waitMs: number): void {
-    const until = Date.now() + Math.max(0, waitMs);
+    const capped = Math.max(0, waitMs);
+    const until = Date.now() + capped;
     this.tokens = 0;
     this.lastRefillMs = Date.now();
     this.pausedUntilMs = Math.max(this.pausedUntilMs, until);
+    if (capped < 250) {
+      this.softResumeRps = Math.min(this.softResumeRpsDefault, this.maxRps);
+      this.softResumeUntilMs = Math.max(
+        this.softResumeUntilMs,
+        this.pausedUntilMs + this.softResumeMs,
+      );
+    } else {
+      // Window wait already serialized the pool — resume at full pace.
+      this.softResumeUntilMs = 0;
+      this.softResumeRps = null;
+    }
+  }
+
+  /**
+   * Proactive throttle from X-RateLimit-Remaining. Slows starts before we hit 0
+   * instead of slamming into RATE_LIMITED.
+   */
+  noteRemaining(remaining: number | undefined): void {
+    if (typeof remaining !== "number" || !Number.isFinite(remaining)) {
+      return;
+    }
+    if (remaining <= 0) {
+      this.tokens = 0;
+      // Pause until the next wall-clock second (API fixed windows align to it).
+      const msToNextSec = 1000 - (Date.now() % 1000) + 5;
+      this.pauseFor(msToNextSec);
+      return;
+    }
+    if (remaining <= 3) {
+      this.tokens = Math.min(this.tokens, 0);
+      const now = Date.now();
+      this.softResumeRps = Math.min(
+        this.softResumeRps ?? this.maxRps,
+        Math.max(1, remaining),
+      );
+      this.softResumeUntilMs = Math.max(this.softResumeUntilMs, now + 500);
+    }
   }
 }

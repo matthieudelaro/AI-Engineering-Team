@@ -216,7 +216,20 @@ function pickBridgeCell(
 
   const line = lineBetween(bestPair.a, bestPair.b);
   for (const p of line) {
-    if (!blocked.has(key(p.x, p.y)) && inBounds(p.x, p.y, map.bounds)) {
+    const k = key(p.x, p.y);
+    if (blocked.has(k) || !inBounds(p.x, p.y, map.bounds)) {
+      continue;
+    }
+    // Only the next orthogonal step from owned land is claimable; mid-line
+    // empties return INVALID_TARGET and burn the place-tile budget.
+    let adjacent = false;
+    for (const { x: dx, y: dy } of NEIGHBORS) {
+      if (owned.has(key(p.x + dx, p.y + dy))) {
+        adjacent = true;
+        break;
+      }
+    }
+    if (adjacent) {
       return p;
     }
   }
@@ -267,8 +280,9 @@ export function pickClaimTarget(
   ownedSet?: Set<string>,
   pendingSet?: Set<string>,
 ): Point | null {
-  const owned = ownedSet ?? buildOwnershipMap(map.tiles, self.name).owned;
-  const blocked = blockedClaimCells(owned, pendingSet);
+  const { owned: ownedFromMap, occupied } = buildOwnershipMap(map.tiles, self.name);
+  const owned = ownedSet ?? ownedFromMap;
+  const blocked = blockedClaimCells(owned, pendingSet, occupied, self.name);
   const primary = pickStrategy();
   const tried = new Set<Strategy>();
 

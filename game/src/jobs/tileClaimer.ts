@@ -122,13 +122,15 @@ async function claimerTick(
     const uiBatch = await takeUiClaimQueue(env, UI_CLAIM_DRAIN_BATCH);
 
     if (uiBatch.length > 0) {
-      const { delayMs } = await runUiQueueWorkers(workerCtx, uiBatch);
-      schedule(delayMs);
+      // Rate-limit backoff is handled inside the worker pool (limiter.pauseFor).
+      // Do not sleep again here — that was cutting sustained rate to ~10/s.
+      await runUiQueueWorkers(workerCtx, uiBatch);
+      schedule(0);
       return;
     }
 
     let uiChecks = 0;
-    const { delayMs, placed } = await runAutoClaimWorkers(
+    const { placed } = await runAutoClaimWorkers(
       workerCtx,
       recentClaims,
       async () => {
@@ -149,13 +151,13 @@ async function claimerTick(
       },
     );
 
-    if (placed === 0 && delayMs === 0) {
+    if (placed === 0) {
       await logJobEvent(db, "info", "claim_idle", "no claim target or rate budget empty");
       schedule(defaultPlaceDelayMs());
       return;
     }
 
-    schedule(delayMs);
+    schedule(0);
   } catch (error) {
     const message = error instanceof Error ? error.message : "claim error";
     await logJobEvent(db, "error", "claim_error", message);
