@@ -48,6 +48,9 @@ body {
 .stats {
   font-size: var(--text-panel);
   color: #9db0c9;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .status {

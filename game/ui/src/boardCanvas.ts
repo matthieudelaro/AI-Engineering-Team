@@ -29,6 +29,21 @@ export interface Camera {
   translateY: number;
 }
 
+/** Keep the same cells under the same screen pixels when bounds.min_* changes. */
+export function compensateCameraForBoundsChange(
+  previous: BoundBox,
+  next: BoundBox,
+  camera: Camera,
+): Camera {
+  const originShiftX = (previous.min_x - next.min_x) * CELL_STRIDE;
+  const originShiftY = (previous.min_y - next.min_y) * CELL_STRIDE;
+  return {
+    scale: camera.scale,
+    translateX: camera.translateX - originShiftX * camera.scale,
+    translateY: camera.translateY - originShiftY * camera.scale,
+  };
+}
+
 export function boardPixelSize(bounds: BoundBox): { width: number; height: number } {
   const cols = bounds.max_x - bounds.min_x + 1;
   const rows = bounds.max_y - bounds.min_y + 1;
@@ -272,7 +287,12 @@ export class BoardRenderer {
     this.canvas.style.height = `${height}px`;
     this.canvas.width = Math.round(width * dpr);
     this.canvas.height = Math.round(height * dpr);
-    this.scheduleRedraw();
+    if (this.bounds && this.cellState) {
+      this.redrawScheduled = false;
+      this.drawFrame();
+    } else {
+      this.scheduleRedraw();
+    }
   }
 
   fitWorldSize(): { width: number; height: number } {

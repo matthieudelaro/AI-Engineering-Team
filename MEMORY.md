@@ -12,3 +12,6 @@ current: replace outdated lines in place, do not just append.
 
 ## In flight
 - Nothing yet. This fills in as we work.
+
+## Learned
+- Game UI map “jumps” on API sync were from bounds `min_x`/`min_y` shifting world pixels without camera compensation, plus `fitToView` on every expansion. Fix: compensate translate; refit only on initial load.

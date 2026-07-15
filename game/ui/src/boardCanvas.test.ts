@@ -8,6 +8,8 @@ import {
   cellPixelOrigin,
   CELL_GAP,
   CELL_SIZE,
+  CELL_STRIDE,
+  compensateCameraForBoundsChange,
   EMPTY_FILL,
   PENDING_EMPTY_FILL,
 } from "./boardCanvas.js";
@@ -53,6 +55,59 @@ describe("boardPixelSize", () => {
       width: CELL_SIZE * 3 + CELL_GAP * 2,
       height: CELL_SIZE * 2 + CELL_GAP,
     });
+  });
+});
+
+describe("compensateCameraForBoundsChange", () => {
+  it("adjusts translate when min_x decreases", () => {
+    const prev = { min_x: 10, min_y: 0, max_x: 20, max_y: 10 };
+    const next = { min_x: 5, min_y: 0, max_x: 20, max_y: 10 };
+    const camera = { scale: 2, translateX: 100, translateY: 50 };
+    const originShiftX = (10 - 5) * CELL_STRIDE;
+    expect(compensateCameraForBoundsChange(prev, next, camera)).toEqual({
+      scale: 2,
+      translateX: 100 - originShiftX * 2,
+      translateY: 50,
+    });
+  });
+
+  it("adjusts translate when min_y decreases", () => {
+    const prev = { min_x: 0, min_y: 20, max_x: 10, max_y: 30 };
+    const next = { min_x: 0, min_y: 15, max_x: 10, max_y: 30 };
+    const camera = { scale: 1.5, translateX: 40, translateY: 80 };
+    const originShiftY = (20 - 15) * CELL_STRIDE;
+    expect(compensateCameraForBoundsChange(prev, next, camera)).toEqual({
+      scale: 1.5,
+      translateX: 40,
+      translateY: 80 - originShiftY * 1.5,
+    });
+  });
+
+  it("leaves camera unchanged when bounds origin is unchanged", () => {
+    const prev = { min_x: 0, min_y: 0, max_x: 10, max_y: 10 };
+    const next = { min_x: 0, min_y: 0, max_x: 20, max_y: 20 };
+    const camera = { scale: 3, translateX: 12, translateY: 34 };
+    expect(compensateCameraForBoundsChange(prev, next, camera)).toEqual(camera);
+  });
+
+  it("keeps the same screen position for a cell when bounds origin shifts", () => {
+    const prev = { min_x: 10, min_y: 20, max_x: 30, max_y: 40 };
+    const next = { min_x: 5, min_y: 15, max_x: 30, max_y: 40 };
+    const camera = { scale: 1.5, translateX: 200, translateY: 100 };
+    const cell = { x: 10, y: 20 };
+    const beforePx = cellPixelOrigin(cell.x, cell.y, prev);
+    const afterPx = cellPixelOrigin(cell.x, cell.y, next);
+    const screenBefore = {
+      x: camera.translateX + beforePx.px * camera.scale,
+      y: camera.translateY + beforePx.py * camera.scale,
+    };
+    const compensated = compensateCameraForBoundsChange(prev, next, camera);
+    const screenAfter = {
+      x: compensated.translateX + afterPx.px * compensated.scale,
+      y: compensated.translateY + afterPx.py * compensated.scale,
+    };
+    expect(screenAfter.x).toBeCloseTo(screenBefore.x);
+    expect(screenAfter.y).toBeCloseTo(screenBefore.y);
   });
 });
 
@@ -161,5 +216,57 @@ describe("BoardRenderer", () => {
     expect(renderer.fitWorldSize()).toEqual(boardPixelSize(bounds));
     expect(canvas.width).toBeLessThanOrEqual(300);
     expect(canvas.height).toBeLessThanOrEqual(300);
+  });
+
+  it("redraws synchronously when the viewport resizes after a full render", () => {
+    let rafScheduled = false;
+    const originalRaf = globalThis.requestAnimationFrame;
+    globalThis.requestAnimationFrame = () => {
+      rafScheduled = true;
+      return 0;
+    };
+
+    try {
+      const ctx = {
+        setTransform: () => {},
+        clearRect: () => {},
+        fillRect: () => {},
+        fillStyle: "",
+        strokeStyle: "",
+        lineWidth: 0,
+        strokeRect: () => {},
+        createLinearGradient: () => ({ addColorStop: () => {} }),
+        beginPath: () => {},
+        moveTo: () => {},
+        lineTo: () => {},
+        closePath: () => {},
+        fill: () => {},
+      } as unknown as CanvasRenderingContext2D;
+      let clearRectCalls = 0;
+      ctx.clearRect = () => {
+        clearRectCalls += 1;
+      };
+      const canvas = {
+        width: 0,
+        height: 0,
+        style: { width: "", height: "" },
+        getContext: () => ctx,
+      } as unknown as HTMLCanvasElement;
+
+      const renderer = new BoardRenderer(canvas);
+      renderer.setViewportCssSize(100, 100);
+      renderer.renderFull(
+        bounds,
+        () => ({ fill: "#000", isSelf: false, hasFlag: false, isPending: false }),
+        [{ x: 0, y: 0 }],
+      );
+      rafScheduled = false;
+      clearRectCalls = 0;
+      renderer.setViewportCssSize(120, 90);
+      expect(clearRectCalls).toBeGreaterThan(0);
+      expect(rafScheduled).toBe(false);
+    } finally {
+      globalThis.requestAnimationFrame = originalRaf;
+    }
   });
 });

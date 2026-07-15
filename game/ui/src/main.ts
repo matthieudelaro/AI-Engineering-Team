@@ -30,6 +30,7 @@ import { PLAYER_ID } from "./config.js";
 import { RateBudget } from "./rateBudget.js";
 import {
   BoardRenderer,
+  compensateCameraForBoundsChange,
   type BoardCellState,
 } from "./boardCanvas.js";
 import type { BoundBox, LeaderboardEntry, MapResponse, PlayerColors, Tile } from "./types.js";
@@ -358,6 +359,8 @@ function scheduleMapViewFit(): void {
 
 function renderBoard(map: MapResponse, refit = false): void {
   hideBoardError();
+  const previousBounds = boardRenderer.getBounds();
+  const previousCamera = boardRenderer.getCamera();
   boardRenderer.renderFull(
     map.bounds,
     (x, y) => {
@@ -366,6 +369,16 @@ function renderBoard(map: MapResponse, refit = false): void {
     },
     collectRenderCoords(),
   );
+
+  if (
+    previousBounds !== null &&
+    !refit &&
+    !boundsEqual(previousBounds, map.bounds)
+  ) {
+    boardRenderer.setCamera(
+      compensateCameraForBoundsChange(previousBounds, map.bounds, previousCamera),
+    );
+  }
 
   if (refit) {
     // Fit synchronously when layout is ready so the first paint is not at scale=1.
@@ -466,7 +479,7 @@ function applyMapSnapshot(map: MapResponse, meta: CachedReadMeta): void {
     rebuildTileIndex(map);
     if (!painting) {
       pendingCells.clear();
-      renderBoard(map, isInitial || expanded);
+      renderBoard(map, isInitial);
     }
     lastBounds = { ...map.bounds };
     updateStats();
@@ -767,7 +780,7 @@ function handleMapStreamBatch(events: MapStreamEvent[]): void {
   }
 
   if (needsFullRender && latestMap && !painting) {
-    renderBoard(latestMap, boundsExpandedNow);
+    renderBoard(latestMap, false);
   }
   if (boundsExpandedPending) {
     boundsExpandedPending = false;
