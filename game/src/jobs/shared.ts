@@ -496,6 +496,66 @@ export async function isUiClaimActive(env: Env): Promise<boolean> {
   }
 }
 
+/**
+ * Non-destructive peek: true when the UI claim queue has pending tiles.
+ * Fails open (false) on timeout or error so auto-claim is never blocked.
+ */
+export async function hasUiClaimQueueWork(env: Env): Promise<boolean> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 500);
+  try {
+    const res = await fetch(`${getGatewayBaseUrl(env)}/_gateway/ui-claim-queue`, {
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      return false;
+    }
+    const body = (await res.json()) as { pending?: unknown };
+    return typeof body.pending === "number" && body.pending > 0;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/**
+ * Auto-claim should yield when the UI is painting or the queue has work.
+ * Fails open (false) if both probes fail open.
+ */
+export async function shouldYieldAutoClaimToUi(env: Env): Promise<boolean> {
+  if (await isUiClaimActive(env)) {
+    return true;
+  }
+  return hasUiClaimQueueWork(env);
+}
+
+/** Cache window so 18 workers do not hammer the gateway on every acquire. */
+export const AUTO_CLAIM_UI_YIELD_CACHE_MS = 50;
+
+/**
+ * shouldStop callback for auto-claim: yields on UI activity or queue pending,
+ * with a short positive/negative cache to limit gateway traffic.
+ */
+export function createAutoClaimUiYieldProbe(
+  env: Env,
+  cacheMs: number = AUTO_CLAIM_UI_YIELD_CACHE_MS,
+  now: () => number = Date.now,
+): () => Promise<boolean> {
+  let cachedAt = Number.NEGATIVE_INFINITY;
+  let cachedValue = false;
+
+  return async () => {
+    const t = now();
+    if (t - cachedAt < cacheMs) {
+      return cachedValue;
+    }
+    cachedValue = await shouldYieldAutoClaimToUi(env);
+    cachedAt = t;
+    return cachedValue;
+  };
+}
+
 export interface UiClaimQueueTile {
   x: number;
   y: number;

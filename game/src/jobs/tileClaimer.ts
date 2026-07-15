@@ -10,12 +10,12 @@ import {
 import { pickClaimTarget, type Point } from "./claimStrategy.js";
 import {
   buildOwnershipMap,
+  createAutoClaimUiYieldProbe,
   createJobState,
   defaultPlaceDelayMs,
   loadMap,
   logJobEvent,
   ownerName,
-  requeueUiClaims,
   resolveSelfContext,
   scheduleJobTick,
   stopJobState,
@@ -129,26 +129,11 @@ async function claimerTick(
       return;
     }
 
-    let uiChecks = 0;
+    // Yield as soon as UI activity or queue pending is seen (cached ~50ms).
     const { placed } = await runAutoClaimWorkers(
       workerCtx,
       recentClaims,
-      async () => {
-        uiChecks += 1;
-        if (uiChecks < 8) {
-          return false;
-        }
-        uiChecks = 0;
-        const uiProbe = await takeUiClaimQueue(env, 1);
-        if (uiProbe.length > 0) {
-          await requeueUiClaims(
-            env,
-            uiProbe.map((t) => ({ x: t.x, y: t.y })),
-          );
-          return true;
-        }
-        return false;
-      },
+      createAutoClaimUiYieldProbe(env),
     );
 
     if (placed === 0) {
