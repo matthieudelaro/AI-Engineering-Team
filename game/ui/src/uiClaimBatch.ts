@@ -59,4 +59,10 @@ export class UiClaimBatcher {
       this.onFlush(tiles);
     }
   }
+
+  /** Drop unsent tiles without flushing to the gateway. */
+  clear(): void {
+    this.scheduled = false;
+    this.batch.clear();
+  }
 }

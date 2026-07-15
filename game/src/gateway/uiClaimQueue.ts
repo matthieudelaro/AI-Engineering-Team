@@ -27,6 +27,22 @@ export interface UiClaimTakenTile {
   isRetry: boolean;
 }
 
+export interface UiClaimQueueHeadTile {
+  x: number;
+  y: number;
+  isRetry: boolean;
+}
+
+export interface UiClaimQueueStats {
+  pending: number;
+  inFlight: number;
+  total: number;
+  pendingRetries: number;
+  head: UiClaimQueueHeadTile[];
+}
+
+const HEAD_PREVIEW_LIMIT = 10;
+
 function tileKey(x: number, y: number): string {
   return `${x},${y}`;
 }
@@ -176,10 +192,52 @@ export function scheduleUiClaimRetry(
   return true;
 }
 
-/** Reset queue state. Intended for tests. */
-export function resetUiClaimQueue(): void {
+/** Snapshot of queue depth and fifo head for the UI. */
+export function getUiClaimQueueStats(): UiClaimQueueStats {
+  let pendingRetries = 0;
+  for (const entry of pending.values()) {
+    if (entry.isRetry) {
+      pendingRetries += 1;
+    }
+  }
+
+  const head: UiClaimQueueHeadTile[] = [];
+  for (const key of order) {
+    if (head.length >= HEAD_PREVIEW_LIMIT) {
+      break;
+    }
+    const entry = pending.get(key);
+    if (!entry) {
+      continue;
+    }
+    head.push({ x: entry.x, y: entry.y, isRetry: entry.isRetry });
+  }
+
+  const pendingCount = pending.size;
+  const inFlightCount = inFlight.size;
+
+  return {
+    pending: pendingCount,
+    inFlight: inFlightCount,
+    total: pendingCount + inFlightCount,
+    pendingRetries,
+    head,
+  };
+}
+
+function clearUiClaimQueueState(): void {
   pending.clear();
   order.length = 0;
   inFlight.clear();
   retriedKeys.clear();
+}
+
+/** Clear all queue state (pending, in-flight, retry budget). */
+export function clearUiClaimQueue(): void {
+  clearUiClaimQueueState();
+}
+
+/** Reset queue state. Intended for tests. */
+export function resetUiClaimQueue(): void {
+  clearUiClaimQueueState();
 }

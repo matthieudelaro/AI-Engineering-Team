@@ -18,6 +18,7 @@ import { buildPlayerColors, mapColorForPlayer } from "./playerColors.js";
 import { initMapZoom } from "./mapZoom.js";
 import { initApiConsole, logApiCall } from "./apiConsole.js";
 import { initRatePanel } from "./ratePanel.js";
+import { initClaimQueuePanel } from "./claimQueuePanel.js";
 import { applyMapStreamEvent, subscribeMapStream, type MapStreamEvent } from "./mapStream.js";
 import {
   brushRadiusFromModifiers,
@@ -46,6 +47,7 @@ const boardViewportEl = document.getElementById("board-viewport");
 const leaderboardEl = document.getElementById("leaderboard");
 const apiConsoleEl = document.getElementById("api-console");
 const ratePanelEl = document.getElementById("rate-panel");
+const claimQueuePanelEl = document.getElementById("claim-queue-panel");
 
 if (
   !statsEl ||
@@ -119,6 +121,24 @@ let pendingViewFit = false;
 const claimBatcher = new UiClaimBatcher((tiles) => {
   enqueueUiClaims(tiles);
 });
+
+/** Drop local pending paint + unsent batch when the gateway queue is emptied. */
+function clearLocalPendingClaims(): void {
+  claimBatcher.clear();
+  if (pendingCells.size === 0) {
+    return;
+  }
+  pendingCells.clear();
+  if (latestMap) {
+    renderBoard(latestMap);
+  }
+}
+
+if (claimQueuePanelEl) {
+  initClaimQueuePanel(claimQueuePanelEl, {
+    onCleared: clearLocalPendingClaims,
+  });
+}
 
 function cellKey(x: number, y: number): string {
   return `${x},${y}`;

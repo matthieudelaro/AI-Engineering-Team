@@ -86,4 +86,17 @@ describe("UiClaimBatcher", () => {
     batcher.flushNow();
     expect(onFlush).not.toHaveBeenCalled();
   });
+
+  it("clear discards pending tiles without flushing", () => {
+    const onFlush = vi.fn();
+    let scheduled: (() => void) | null = null;
+    const batcher = new UiClaimBatcher(onFlush, (fn) => {
+      scheduled = fn;
+    });
+
+    batcher.enqueue(1, 1);
+    batcher.clear();
+    scheduled?.();
+    expect(onFlush).not.toHaveBeenCalled();
+  });
 });

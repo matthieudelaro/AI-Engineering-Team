@@ -12,7 +12,9 @@ import { redactHeaders, truncateBody } from "./redact.js";
 import { getUiClaimActivity, touchUiClaimActivity } from "./uiClaimPriority.js";
 import {
   ackUiClaimTiles,
+  clearUiClaimQueue,
   enqueueUiClaimTiles,
+  getUiClaimQueueStats,
   requeueUiClaimTilesFront,
   scheduleUiClaimRetry,
   takeUiClaimTiles,
@@ -139,6 +141,13 @@ export async function createGatewayServer(
 
   app.post("/_gateway/ui-claim-active", async (_request, reply) => {
     touchUiClaimActivity();
+    return reply.status(204).send();
+  });
+
+  app.get("/_gateway/ui-claim-queue", async () => getUiClaimQueueStats());
+
+  app.delete("/_gateway/ui-claim-queue", async (_request, reply) => {
+    clearUiClaimQueue();
     return reply.status(204).send();
   });
 
