@@ -16,3 +16,4 @@ playbooks — branch, commit, and open a PR directly.
 
 ## Playbooks here
 - `001-pr-digest.md`: a morning digest of open pull requests (scheduled, read-only).
+- `002-new-game.md`: switch onto a new game ID (`./scripts/new-game.sh`).

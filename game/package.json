@@ -16,6 +16,7 @@
     "policy": "tsx src/cli.ts policy",
     "play": "tsx src/policies/worker-entry.ts 002-autoplay",
     "ui": "vite --config ui/vite.config.ts",
+    "new-game": "bash ../scripts/new-game.sh",
     "test": "vitest run",
     "test:watch": "vitest"
   },

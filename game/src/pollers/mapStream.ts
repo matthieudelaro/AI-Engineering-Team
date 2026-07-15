@@ -286,16 +286,21 @@ export async function startMapStream(
     if (stopped.value) {
       return;
     }
-    const client = new GameClient(env, { source: "poller" });
-    const snapshot = await fetchInitialMap(client, snapshotPath);
-    if (!snapshot || !isUsableGameStatePayload("map", snapshot)) {
-      return;
+    try {
+      const client = new GameClient(env, { source: "poller" });
+      const snapshot = await fetchInitialMap(client, snapshotPath);
+      if (!snapshot || !isUsableGameStatePayload("map", snapshot)) {
+        return;
+      }
+      mapState = replaceMapStateFromSnapshot(snapshot);
+      await flushPersist(true);
+      await logMapStreamEvent(db, "info", "map_stream_reconcile", "replaced map from live snapshot", {
+        tiles: snapshot.tiles.length,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "reconcile failed";
+      await logMapStreamEvent(db, "warn", "map_stream_reconcile_failed", message);
     }
-    mapState = replaceMapStateFromSnapshot(snapshot);
-    await flushPersist(true);
-    await logMapStreamEvent(db, "info", "map_stream_reconcile", "replaced map from live snapshot", {
-      tiles: snapshot.tiles.length,
-    });
   };
 
   const bootstrap = async (): Promise<boolean> => {
