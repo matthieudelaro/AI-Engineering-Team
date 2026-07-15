@@ -1,6 +1,7 @@
 import {
   blockedClaimCells,
   buildOwnershipMap,
+  pickBridgeStepToward,
   type MapResponse,
   type SelfContext,
 } from "./shared.js";
@@ -10,6 +11,9 @@ export interface Point {
   x: number;
   y: number;
 }
+
+/** Auto-claim focus: attack this player's contested border tiles first. */
+export const AUTO_PRIORITY_ENEMY = "Spammer";
 
 const NEIGHBORS: Point[] = [
   { x: 1, y: 0 },
@@ -290,6 +294,85 @@ const FALLBACK_ORDER: Record<Strategy, Strategy[]> = {
   bridge: ["grow", "random", "bridge"],
 };
 
+/**
+ * Enemy tiles that border a third-party player (someone other than self and
+ * other than the enemy). Spammer↔Spammer adjacency alone does not count — that
+ * would match the whole blob.
+ */
+export function findContestedPriorityEnemyTiles(
+  occupied: Map<string, string | null>,
+  selfName: string | null,
+  enemyName: string = AUTO_PRIORITY_ENEMY,
+): Point[] {
+  const targets: Point[] = [];
+  for (const [cell, owner] of occupied) {
+    if (owner !== enemyName) {
+      continue;
+    }
+    const [xs, ys] = cell.split(",");
+    const x = Number(xs);
+    const y = Number(ys);
+    let contested = false;
+    for (const { x: dx, y: dy } of NEIGHBORS) {
+      const neighbor = occupied.get(key(x + dx, y + dy));
+      if (
+        neighbor &&
+        neighbor !== "neutral" &&
+        neighbor !== selfName &&
+        neighbor !== enemyName
+      ) {
+        contested = true;
+        break;
+      }
+    }
+    if (contested) {
+      targets.push({ x, y });
+    }
+  }
+  return targets;
+}
+
+/**
+ * Prefer claiming contested Spammer tiles: step onto one if adjacent, else one
+ * bridge step toward the nearest. Returns null when none are reachable.
+ */
+export function pickPriorityEnemyClaim(
+  map: MapResponse,
+  selfName: string | null,
+  owned: Set<string>,
+  blocked: Set<string>,
+  occupied: Map<string, string | null>,
+  pendingSet?: Set<string>,
+  enemyName: string = AUTO_PRIORITY_ENEMY,
+): Point | null {
+  if (!selfName) {
+    return null;
+  }
+  const targets = findContestedPriorityEnemyTiles(occupied, selfName, enemyName);
+  if (targets.length === 0) {
+    return null;
+  }
+
+  const claimable: Point[] = [];
+  for (const t of targets) {
+    const k = key(t.x, t.y);
+    if (owned.has(k) || blocked.has(k)) {
+      continue;
+    }
+    for (const { x: dx, y: dy } of NEIGHBORS) {
+      if (owned.has(key(t.x + dx, t.y + dy))) {
+        claimable.push(t);
+        break;
+      }
+    }
+  }
+  if (claimable.length > 0) {
+    return claimable[Math.floor(Math.random() * claimable.length)]!;
+  }
+
+  return pickBridgeStepToward(map, selfName, targets, owned, pendingSet);
+}
+
 /** 5% random · 85% grow · 10% bridge (bridge skipped when territory is huge). */
 export function pickClaimTarget(
   map: MapResponse,
@@ -308,6 +391,19 @@ export function pickClaimTarget(
     }
   }
   const blocked = blockedClaimCells(owned, pendingSet, occupied, self.name);
+
+  // Auto priority (UI queue empty path): contested Spammer border tiles.
+  const priority = pickPriorityEnemyClaim(
+    map,
+    self.name,
+    owned,
+    blocked,
+    occupied,
+    pendingSet,
+  );
+  if (priority !== null) {
+    return priority;
+  }
 
   // Primary expansion: claim hollow lasso perimeters around our territory so
   // the game fills the enclosed interior. Falls through to the grow/random/

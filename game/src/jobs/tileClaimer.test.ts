@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { pickClaimTarget } from "./claimStrategy.js";
+import {
+  findContestedPriorityEnemyTiles,
+  pickClaimTarget,
+} from "./claimStrategy.js";
 import {
   expansionLassoPlanner,
   resetExpansionLassoPlanner,
@@ -10,6 +13,83 @@ describe("claimStrategy", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     resetExpansionLassoPlanner();
+  });
+
+  describe("Spammer contest priority", () => {
+    it("lists Spammer tiles that touch a third-party player (not self)", () => {
+      const occupied = new Map<string, string | null>([
+        ["0,0", "Spammer"],
+        ["1,0", "Enemy"], // third party — only (0,0) touches this
+        ["0,1", "Spammer"], // touches Spammer + Me only
+        ["0,2", "Me"],
+        ["5,0", "Spammer"], // touches only Spammer neighbor
+        ["6,0", "Spammer"],
+        ["5,5", "Spammer"], // isolated
+      ]);
+
+      const targets = findContestedPriorityEnemyTiles(occupied, "Me");
+      expect(targets).toEqual([{ x: 0, y: 0 }]);
+    });
+
+    it("claims an adjacent contested Spammer tile before lasso", () => {
+      vi.spyOn(Math, "random").mockReturnValue(0.1);
+
+      const map = {
+        bounds: { min_x: -5, min_y: -5, max_x: 5, max_y: 5 },
+        tiles: [
+          { x: 0, y: 0, ownership: { owned: "Me" } },
+          { x: 1, y: 0, ownership: { owned: "Spammer" } },
+          { x: 2, y: 0, ownership: { owned: "Enemy" } },
+          { x: 0, y: 1, ownership: "neutral" },
+        ],
+      };
+
+      expansionLassoPlanner().plan = [{ x: 0, y: 1 }];
+
+      const target = pickClaimTarget(map, { name: "Me", tileCount: 1 }, [
+        { x: 0, y: 0 },
+      ]);
+      expect(target).toEqual({ x: 1, y: 0 });
+    });
+
+    it("bridges toward a contested Spammer tile when not yet adjacent", () => {
+      const map = {
+        bounds: { min_x: -5, min_y: -5, max_x: 5, max_y: 5 },
+        tiles: [
+          { x: 0, y: 0, ownership: { owned: "Me" } },
+          { x: 1, y: 0, ownership: "neutral" },
+          { x: 2, y: 0, ownership: { owned: "Spammer" } },
+          { x: 3, y: 0, ownership: { owned: "Enemy" } },
+        ],
+      };
+
+      expansionLassoPlanner().plan = [{ x: 0, y: 1 }];
+
+      const target = pickClaimTarget(map, { name: "Me", tileCount: 1 }, [
+        { x: 0, y: 0 },
+      ]);
+      expect(target).toEqual({ x: 1, y: 0 });
+    });
+
+    it("does not prioritize Spammer tiles that only touch self", () => {
+      vi.spyOn(Math, "random").mockReturnValue(0.1);
+
+      const map = {
+        bounds: { min_x: -5, min_y: -5, max_x: 5, max_y: 5 },
+        tiles: [
+          { x: 0, y: 0, ownership: { owned: "Me" } },
+          { x: 1, y: 0, ownership: { owned: "Spammer" } },
+          { x: 0, y: 1, ownership: "neutral" },
+        ],
+      };
+
+      expansionLassoPlanner().plan = [{ x: 0, y: 1 }];
+
+      const target = pickClaimTarget(map, { name: "Me", tileCount: 1 }, [
+        { x: 0, y: 0 },
+      ]);
+      expect(target).toEqual({ x: 0, y: 1 });
+    });
   });
 
   it("expands to a valid adjacent cell (lasso, else grow fallback)", () => {

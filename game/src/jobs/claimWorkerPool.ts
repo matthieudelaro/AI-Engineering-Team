@@ -32,6 +32,14 @@ export function isInvalidTarget(reason: string | undefined): boolean {
   return reason?.includes("INVALID_TARGET") ?? false;
 }
 
+/** Bridge only when nothing is in flight — else idle workers detour around pending tips. */
+export function canStartUiBridgeStep(
+  activeClaims: number,
+  pendingCount: number,
+): boolean {
+  return activeClaims === 0 && pendingCount === 0;
+}
+
 export type PlaceTileOutcome =
   | { action: "success" }
   | { action: "retry_rate_limit"; waitMs: number }
@@ -291,9 +299,12 @@ class UiClaimAllocator {
       };
     }
 
-    // Bridge steps are always orthogonally adjacent to owned land (and
-    // reserved via pendingClaims), so multiple workers can expand in parallel.
-    // Serializing on activeClaims===0 capped UI-queue drain at ~1 claim/RTT.
+    // Only one bridge at a time. Parallel bridge steps detour around pending
+    // tips (fromUiQueue: false side claims) while the queue still has work.
+    if (!canStartUiBridgeStep(this.activeClaims, this.pendingClaims.size)) {
+      return null;
+    }
+
     const remaining = this.work.slice(this.nextIndex);
     const bridge = pickBridgeStepToward(
       this.map,
