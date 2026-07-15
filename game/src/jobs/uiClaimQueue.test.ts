@@ -36,7 +36,18 @@ describe("takeUiClaimQueue", () => {
     expect(fetchMock.mock.calls[0]![1]).toMatchObject({
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ limit: 5 }),
+      body: JSON.stringify({ limit: 5, reclaim: true }),
+    });
+  });
+
+  it("can disable reclaim for mid-drain refills", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ tiles: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await takeUiClaimQueue(env, 10, false);
+
+    expect(fetchMock.mock.calls[0]![1]).toMatchObject({
+      body: JSON.stringify({ limit: 10, reclaim: false }),
     });
   });
 

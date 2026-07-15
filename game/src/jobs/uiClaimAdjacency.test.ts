@@ -35,6 +35,20 @@ describe("adjacency helpers for UI claim drain", () => {
     expect(findNextAdjacentUiClaimIndex(work, 0, map, "Me")).toBe(1);
   });
 
+  it("skips adjacent tiles that are already owned or reserved", () => {
+    const map = mapWithOwned([{ x: 0, y: 0 }]);
+    const work = [
+      { x: 1, y: 0 },
+      { x: 0, y: 1 },
+      { x: 5, y: 5 },
+    ];
+    const owned = new Set(["1,0"]);
+    const pending = new Set(["0,1"]);
+    expect(
+      findNextAdjacentUiClaimIndex(work, 0, map, "Me", owned, pending),
+    ).toBeNull();
+  });
+
   it("bridges one step toward a distant queued target", () => {
     const map = mapWithOwned([{ x: 0, y: 0 }]);
     const step = pickBridgeStepToward(map, "Me", [{ x: 3, y: 0 }]);

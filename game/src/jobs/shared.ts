@@ -148,6 +148,7 @@ export function isOrthogonallyAdjacentToSelf(
 /**
  * Index of the next UI-queue tile to attempt: prefer orthogonally adjacent
  * (still FIFO among those), else null when nothing is currently claimable.
+ * Skips cells already owned or reserved by an in-flight worker.
  */
 export function findNextAdjacentUiClaimIndex<T extends { x: number; y: number }>(
   work: T[],
@@ -155,9 +156,14 @@ export function findNextAdjacentUiClaimIndex<T extends { x: number; y: number }>
   map: MapResponse,
   selfName: string | null,
   ownedSet?: Set<string>,
+  pendingSet?: Set<string>,
 ): number | null {
   for (let i = fromIndex; i < work.length; i++) {
     const tile = work[i]!;
+    const k = `${tile.x},${tile.y}`;
+    if (ownedSet?.has(k) || pendingSet?.has(k)) {
+      continue;
+    }
     if (isOrthogonallyAdjacentToSelf(map, selfName, tile.x, tile.y, ownedSet)) {
       return i;
     }
@@ -176,48 +182,75 @@ export function pickBridgeStepToward(
   if (!selfName || targets.length === 0) {
     return null;
   }
-  const { owned: ownedFromMap, occupied } = buildOwnershipMap(map.tiles, selfName);
-  const owned = ownedSet ?? ownedFromMap;
-  const blocked = blockedClaimCells(owned, pendingSet, occupied, selfName);
-  const targetKeys = new Set(targets.map((t) => `${t.x},${t.y}`));
-  let best: { x: number; y: number; score: number } | null = null;
+  // Never rebuild ownership from map.tiles when the live set is provided —
+  // that O(tiles) scan ran under the UI-queue lock and stalled in-flight leases.
+  const owned = ownedSet ?? buildOwnershipMap(map.tiles, selfName).owned;
+  if (owned.size === 0) {
+    return null;
+  }
+  const blocked = blockedClaimCells(owned, pendingSet);
 
-  for (const k of owned) {
-    const [xs, ys] = k.split(",");
-    const ox = Number(xs);
-    const oy = Number(ys);
+  // Prefer a direct step onto a queued target when already adjacent.
+  for (const t of targets) {
+    const tk = `${t.x},${t.y}`;
+    if (owned.has(tk) || blocked.has(tk)) {
+      continue;
+    }
     for (const { dx, dy } of NEIGHBORS) {
-      const x = ox + dx;
-      const y = oy + dy;
-      if (
-        x < map.bounds.min_x ||
-        x > map.bounds.max_x ||
-        y < map.bounds.min_y ||
-        y > map.bounds.max_y
-      ) {
-        continue;
-      }
-      const cell = `${x},${y}`;
-      if (blocked.has(cell)) {
-        continue;
-      }
-      if (targetKeys.has(cell)) {
-        return { x, y };
-      }
-      let score = Number.POSITIVE_INFINITY;
-      for (const t of targets) {
-        const d = Math.abs(t.x - x) + Math.abs(t.y - y);
-        if (d < score) {
-          score = d;
-        }
-      }
-      if (!best || score < best.score) {
-        best = { x, y, score };
+      if (owned.has(`${t.x + dx},${t.y + dy}`)) {
+        return { x: t.x, y: t.y };
       }
     }
   }
 
-  return best ? { x: best.x, y: best.y } : null;
+  // BFS from targets until we meet owned land, then take one step from that
+  // owned cell toward the target. O(path length), not O(owned tiles).
+  const inBounds = (x: number, y: number): boolean =>
+    x >= map.bounds.min_x &&
+    x <= map.bounds.max_x &&
+    y >= map.bounds.min_y &&
+    y <= map.bounds.max_y;
+
+  const queue: Array<{ x: number; y: number; tx: number; ty: number }> = [];
+  const seen = new Set<string>();
+  for (const t of targets) {
+    const k = `${t.x},${t.y}`;
+    if (seen.has(k) || owned.has(k)) {
+      continue;
+    }
+    seen.add(k);
+    queue.push({ x: t.x, y: t.y, tx: t.x, ty: t.y });
+  }
+
+  const maxVisit = 4_000;
+  let visited = 0;
+  while (queue.length > 0 && visited < maxVisit) {
+    const cur = queue.shift()!;
+    visited += 1;
+    for (const { dx, dy } of NEIGHBORS) {
+      const x = cur.x + dx;
+      const y = cur.y + dy;
+      if (!inBounds(x, y)) {
+        continue;
+      }
+      const cell = `${x},${y}`;
+      if (owned.has(cell)) {
+        // Step from this owned cell toward the target (back along BFS is the
+        // neighbor we came from — `cur` is unowned and adjacent to owned).
+        if (!blocked.has(`${cur.x},${cur.y}`)) {
+          return { x: cur.x, y: cur.y };
+        }
+        continue;
+      }
+      if (seen.has(cell) || blocked.has(cell)) {
+        continue;
+      }
+      seen.add(cell);
+      queue.push({ x, y, tx: cur.tx, ty: cur.ty });
+    }
+  }
+
+  return null;
 }
 
 /** Orthogonally adjacent frontier tiles we can claim next. */
@@ -510,7 +543,12 @@ export async function hasUiClaimQueueWork(env: Env): Promise<boolean> {
     if (!res.ok) {
       return false;
     }
-    const body = (await res.json()) as { pending?: unknown };
+    const body = (await res.json()) as { pending?: unknown; total?: unknown };
+    // Count in-flight leases too — take() moves tiles out of pending while the
+    // drain still owns them. Ignoring inFlight let auto resume mid-drain.
+    if (typeof body.total === "number") {
+      return body.total > 0;
+    }
     return typeof body.pending === "number" && body.pending > 0;
   } catch {
     return false;
@@ -567,10 +605,14 @@ const UI_CLAIM_QUEUE_TAKE_LIMIT = 20;
 /**
  * Dequeue UI claim targets from the gateway. Fails open to an empty list when
  * the gateway is unreachable.
+ *
+ * @param reclaim When true (default), gateway returns orphaned inFlight leases
+ *   to pending before taking. Pass false for mid-drain refills.
  */
 export async function takeUiClaimQueue(
   env: Env,
   limit: number = UI_CLAIM_QUEUE_TAKE_LIMIT,
+  reclaim: boolean = true,
 ): Promise<UiClaimQueueTile[]> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 500);
@@ -578,7 +620,7 @@ export async function takeUiClaimQueue(
     const res = await fetch(`${getGatewayBaseUrl(env)}/_gateway/ui-claim-queue/take`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ limit }),
+      body: JSON.stringify({ limit, reclaim }),
       signal: controller.signal,
     });
     if (!res.ok) {

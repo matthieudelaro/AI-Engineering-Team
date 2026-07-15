@@ -166,6 +166,20 @@ export function ackUiClaimTiles(tiles: UiClaimTileInput[]): void {
 }
 
 /**
+ * Move every in-flight lease back to the pending front.
+ * Safe at claimer tick boundaries: a healthy flush leaves inFlight empty, so
+ * any leftovers are orphans from a crashed/restarted job.
+ */
+export function reclaimUiClaimInFlight(): number {
+  if (inFlight.size === 0) {
+    return 0;
+  }
+  const orphaned = [...inFlight.values()].map((e) => ({ x: e.x, y: e.y }));
+  requeueUiClaimTilesFront(orphaned);
+  return orphaned.length;
+}
+
+/**
  * Re-enqueue a rejected UI-queue tile for one retry within 1s.
  * Returns false if already pending/in-flight or already consumed its retry.
  */

@@ -39,13 +39,25 @@ describe("hasUiClaimQueueWork", () => {
   });
 
   it("returns true when pending > 0", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ pending: 3 })));
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ pending: 3, total: 3 })));
+
+    await expect(hasUiClaimQueueWork(env)).resolves.toBe(true);
+  });
+
+  it("returns true when only in-flight leases remain (total > 0)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse({ pending: 0, inFlight: 12, total: 12 })),
+    );
 
     await expect(hasUiClaimQueueWork(env)).resolves.toBe(true);
   });
 
   it("returns false when pending is 0", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ pending: 0 })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse({ pending: 0, total: 0 })),
+    );
 
     await expect(hasUiClaimQueueWork(env)).resolves.toBe(false);
   });

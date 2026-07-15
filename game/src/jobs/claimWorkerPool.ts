@@ -199,10 +199,15 @@ class UiClaimAllocator {
         return task;
       }
 
-      const more = await takeUiClaimQueue(this.env, UI_REFILL_BATCH);
-      if (more.length > 0) {
-        this.ingestSync(more);
-        return this.pickTaskLocked();
+      // Only lease more tiles when the local buffer is empty. Refilling while
+      // remaining work is blocked (pending frontier) piled hundreds of tiles
+      // into gateway inFlight without completing them.
+      if (this.nextIndex >= this.work.length) {
+        const more = await takeUiClaimQueue(this.env, UI_REFILL_BATCH, false);
+        if (more.length > 0) {
+          this.ingestSync(more);
+          return this.pickTaskLocked();
+        }
       }
 
       // In-flight reservations (pending) or active workers may open adjacency
@@ -216,18 +221,44 @@ class UiClaimAllocator {
     });
   }
 
-  async flush(): Promise<void> {
-    const notStarted = this.work.slice(this.nextIndex).map((t) => ({ x: t.x, y: t.y }));
-    const putBack = [...this.toRequeue, ...notStarted];
-    if (putBack.length > 0) {
-      await requeueUiClaims(this.env, putBack);
+  async flush(options?: { dropUnreachable?: boolean }): Promise<void> {
+    const notStarted: Point[] = [];
+    for (let i = this.nextIndex; i < this.work.length; i++) {
+      const tile = this.work[i]!;
+      const k = cellKey(tile.x, tile.y);
+      if (this.ownedSet.has(k)) {
+        this.toAck.push({ x: tile.x, y: tile.y });
+      } else {
+        notStarted.push({ x: tile.x, y: tile.y });
+      }
+    }
+    const remaining = [...this.toRequeue, ...notStarted];
+    if (options?.dropUnreachable) {
+      // Unreachable paint — ack out so we do not take/requeue-spin forever.
+      for (const tile of remaining) {
+        this.toAck.push(tile);
+      }
+    } else if (remaining.length > 0) {
+      await requeueUiClaims(this.env, remaining);
     }
     if (this.toAck.length > 0) {
       void ackUiClaims(this.env, this.toAck);
     }
+    this.done = true;
   }
 
   private pickTaskLocked(): ClaimTask | null {
+    // Drop already-owned tiles at the head so they are not requeued as work.
+    while (this.nextIndex < this.work.length) {
+      const head = this.work[this.nextIndex]!;
+      const headKey = cellKey(head.x, head.y);
+      if (!this.ownedSet.has(headKey)) {
+        break;
+      }
+      this.toAck.push({ x: head.x, y: head.y });
+      this.nextIndex += 1;
+    }
+
     if (this.nextIndex >= this.work.length) {
       return null;
     }
@@ -238,16 +269,20 @@ class UiClaimAllocator {
       this.map,
       this.self.name,
       this.ownedSet,
+      this.pendingClaims,
     );
 
     if (adjacentIndex !== null) {
-      const tile = swapToFront(this.work, this.nextIndex, adjacentIndex);
-      this.nextIndex += 1;
+      const tile = this.work[adjacentIndex]!;
       const k = cellKey(tile.x, tile.y);
+      // Reserve before advancing — advancing then bailing left leases stuck
+      // in gateway inFlight (skipped past nextIndex, never flushed/acked).
       if (this.ownedSet.has(k) || this.pendingClaims.has(k)) {
         return null;
       }
       this.pendingClaims.add(k);
+      swapToFront(this.work, this.nextIndex, adjacentIndex);
+      this.nextIndex += 1;
       return {
         x: tile.x,
         y: tile.y,
@@ -431,6 +466,7 @@ async function uiClaimWorker(
 ): Promise<{ placed: number; rateLimitWaitMs: number }> {
   let placed = 0;
   let rateLimitWaitMs = 0;
+  let idleSpins = 0;
 
   while (!allocator.isFinished()) {
     const task = await allocator.acquireTask();
@@ -438,9 +474,15 @@ async function uiClaimWorker(
       if (allocator.isFinished()) {
         break;
       }
+      idleSpins += 1;
+      // No adjacent/bridge progress — don't hold gateway inFlight forever.
+      if (idleSpins > 100) {
+        break;
+      }
       await sleep(ALLOC_IDLE_MS);
       continue;
     }
+    idleSpins = 0;
 
     allocator.trackStart();
     try {
@@ -475,14 +517,14 @@ export async function runUiQueueWorkers(
     ),
   );
 
-  await allocator.flush();
-
   let placed = 0;
   let delayMs = 0;
   for (const result of results) {
     placed += result.placed;
     delayMs = Math.max(delayMs, result.rateLimitWaitMs);
   }
+
+  await allocator.flush({ dropUnreachable: placed === 0 });
 
   return { delayMs, placed };
 }

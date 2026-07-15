@@ -4,6 +4,7 @@ import {
   clearUiClaimQueue,
   enqueueUiClaimTiles,
   getUiClaimQueueStats,
+  reclaimUiClaimInFlight,
   requeueUiClaimTilesFront,
   resetUiClaimQueue,
   scheduleUiClaimRetry,
@@ -150,6 +151,24 @@ describe("uiClaimQueue", () => {
 
     expect(takeUiClaimTiles(10)).toEqual([{ x: 1, y: 1, isRetry: false }]);
     expect(scheduleUiClaimRetry(1, 1, 1000)).toBe(true);
+  });
+
+  it("reclaimUiClaimInFlight returns orphaned leases to the pending front", () => {
+    enqueueUiClaimTiles([
+      { x: 1, y: 1 },
+      { x: 2, y: 2 },
+      { x: 3, y: 3 },
+    ]);
+    takeUiClaimTiles(2);
+    expect(getUiClaimQueueStats()).toMatchObject({ pending: 1, inFlight: 2 });
+
+    expect(reclaimUiClaimInFlight()).toBe(2);
+    expect(getUiClaimQueueStats()).toMatchObject({ pending: 3, inFlight: 0 });
+    expect(takeUiClaimTiles(10)).toEqual([
+      { x: 1, y: 1, isRetry: false },
+      { x: 2, y: 2, isRetry: false },
+      { x: 3, y: 3, isRetry: false },
+    ]);
   });
 
   it("reset clears the queue for tests", () => {

@@ -122,11 +122,19 @@ async function claimerTick(
     const uiBatch = await takeUiClaimQueue(env, UI_CLAIM_DRAIN_BATCH);
 
     if (uiBatch.length > 0) {
-      // Rate-limit backoff is handled inside the worker pool (limiter.pauseFor).
-      // Do not sleep again here — that was cutting sustained rate to ~10/s.
-      await runUiQueueWorkers(workerCtx, uiBatch);
-      schedule(0);
-      return;
+      const { placed } = await runUiQueueWorkers(workerCtx, uiBatch);
+      if (placed > 0) {
+        schedule(0);
+        return;
+      }
+      // Unreachable UI tiles were dropped — fall through to auto so we do not
+      // spin take/requeue forever while the queue blocks claiming.
+      await logJobEvent(
+        db,
+        "warn",
+        "claim_ui_unreachable",
+        `dropped ${uiBatch.length} UI-queue tiles with no adjacent/bridge progress`,
+      );
     }
 
     // Yield as soon as UI activity or queue pending is seen (cached ~50ms).

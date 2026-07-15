@@ -15,6 +15,7 @@ import {
   clearUiClaimQueue,
   enqueueUiClaimTiles,
   getUiClaimQueueStats,
+  reclaimUiClaimInFlight,
   requeueUiClaimTilesFront,
   scheduleUiClaimRetry,
   takeUiClaimTiles,
@@ -32,6 +33,8 @@ const uiClaimEnqueueSchema = z.object({
 
 const uiClaimTakeSchema = z.object({
   limit: z.number().int().positive().optional(),
+  /** When true (default), orphaned inFlight leases are returned to pending first. */
+  reclaim: z.boolean().optional(),
 });
 
 const uiClaimRetrySchema = uiClaimTileSchema;
@@ -167,6 +170,11 @@ export async function createGatewayServer(
       return reply.status(400).send({ error: "invalid_body", issues: parsed.error.issues });
     }
     const limit = parsed.data.limit ?? UI_CLAIM_TAKE_DEFAULT_LIMIT;
+    // Default reclaim: heal orphans from a crashed job. Refills pass reclaim:false
+    // so mid-drain leases are not stolen back into pending.
+    if (parsed.data.reclaim !== false) {
+      reclaimUiClaimInFlight();
+    }
     return { tiles: takeUiClaimTiles(limit) };
   });
 
