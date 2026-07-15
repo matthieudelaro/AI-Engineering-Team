@@ -319,7 +319,7 @@ body {
   position: fixed;
   right: 1rem;
   bottom: 1rem;
-  width: min(520px, calc(100vw - 2rem));
+  width: min(360px, calc(100vw - 2rem));
   padding: 1.1rem 1.25rem;
   border-radius: 10px;
   border: 1px solid #2a3648;
@@ -358,9 +358,10 @@ body {
 
 .rate-panel-row {
   display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.3rem 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  padding: 0.35rem 0;
   border-bottom: 1px solid #1a2332;
 }
 
@@ -371,9 +372,6 @@ body {
 .rate-panel-label {
   color: #9db0c9;
   font-size: var(--text-panel);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .rate-panel-row.pinned .rate-panel-label {
@@ -390,8 +388,7 @@ body {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: var(--text-title);
   white-space: normal;
-  text-align: right;
-  max-width: 62%;
+  text-align: left;
 }
 
 .rate-panel-row.warm .rate-panel-value {
