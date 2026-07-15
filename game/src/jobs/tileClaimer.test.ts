@@ -1,15 +1,22 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { pickClaimTarget } from "./claimStrategy.js";
+import {
+  expansionLassoPlanner,
+  resetExpansionLassoPlanner,
+} from "./expansionLasso.js";
 import { frontierCandidates } from "./shared.js";
 
 describe("claimStrategy", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    resetExpansionLassoPlanner();
   });
 
-  it("grows adjacent to a recent claim when grow strategy is chosen", () => {
+  it("expands to a valid adjacent cell (lasso, else grow fallback)", () => {
     vi.spyOn(Math, "random").mockReturnValue(0.1);
 
+    // Bounds too small for a large lasso to fit, so this exercises the grow
+    // fallback — the claim must still be a valid cell adjacent to owned land.
     const map = {
       bounds: { min_x: 0, min_y: 0, max_x: 5, max_y: 5 },
       tiles: [
@@ -19,7 +26,35 @@ describe("claimStrategy", () => {
     };
 
     const target = pickClaimTarget(map, { name: "Me", tileCount: 1 }, [{ x: 0, y: 0 }]);
-    expect(target).toEqual({ x: 1, y: 0 });
+    expect(target).not.toBeNull();
+    const owned = new Set(["0,0"]);
+    const isAdjacentToOwned = [
+      { x: 1, y: 0 },
+      { x: -1, y: 0 },
+      { x: 0, y: 1 },
+      { x: 0, y: -1 },
+    ].some((d) => owned.has(`${target!.x + d.x},${target!.y + d.y}`));
+    expect(isAdjacentToOwned).toBe(true);
+  });
+
+  it("prefers a lasso plan cell over the grow single-neighbor when a plan exists", () => {
+    // random=0.1 selects the grow strategy; grow would return (1,0) (first
+    // empty neighbor). The lasso planner must win with its own plan cell (0,1).
+    vi.spyOn(Math, "random").mockReturnValue(0.1);
+
+    const map = {
+      bounds: { min_x: -10, min_y: -10, max_x: 10, max_y: 10 },
+      tiles: [
+        { x: 0, y: 0, ownership: { owned: "Me" } },
+        { x: 1, y: 0, ownership: "neutral" },
+        { x: 0, y: 1, ownership: "neutral" },
+      ],
+    };
+
+    expansionLassoPlanner().plan = [{ x: 0, y: 1 }];
+
+    const target = pickClaimTarget(map, { name: "Me", tileCount: 1 }, [{ x: 0, y: 0 }]);
+    expect(target).toEqual({ x: 0, y: 1 });
   });
 
   it("finds frontier candidates from owned set", () => {

@@ -4,6 +4,7 @@ import {
   type MapResponse,
   type SelfContext,
 } from "./shared.js";
+import { expansionLassoPlanner } from "./expansionLasso.js";
 
 export interface Point {
   x: number;
@@ -307,6 +308,22 @@ export function pickClaimTarget(
     }
   }
   const blocked = blockedClaimCells(owned, pendingSet, occupied, self.name);
+
+  // Primary expansion: claim hollow lasso perimeters around our territory so
+  // the game fills the enclosed interior. Falls through to the grow/random/
+  // bridge mix only when no lasso step is available.
+  const lasso = expansionLassoPlanner().next(
+    map,
+    self.name,
+    owned,
+    blocked,
+    occupied,
+    map.bounds,
+  );
+  if (lasso !== null && !owned.has(key(lasso.x, lasso.y)) && !blocked.has(key(lasso.x, lasso.y))) {
+    return lasso;
+  }
+
   const primary = pickStrategy();
   const tried = new Set<Strategy>();
 
