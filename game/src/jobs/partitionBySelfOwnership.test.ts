@@ -10,7 +10,7 @@ describe("partitionBySelfOwnership", () => {
     ],
   };
 
-  it("acks self-owned and foreign tiles; only empty cells stay claimable", () => {
+  it("acks only self-owned tiles; enemy tiles stay claimable for attacks", () => {
     const { claimable, alreadyOwned } = partitionBySelfOwnership(
       [
         { x: 0, y: 0 },
@@ -21,14 +21,14 @@ describe("partitionBySelfOwnership", () => {
       "Me",
     );
 
-    expect(alreadyOwned).toEqual([
-      { x: 0, y: 0 },
+    expect(alreadyOwned).toEqual([{ x: 0, y: 0 }]);
+    expect(claimable).toEqual([
       { x: 1, y: 1 },
+      { x: 2, y: 2 },
     ]);
-    expect(claimable).toEqual([{ x: 2, y: 2 }]);
   });
 
-  it("treats unknown self as owning nothing but still skips foreign tiles", () => {
+  it("treats unknown self as owning nothing", () => {
     const { claimable, alreadyOwned } = partitionBySelfOwnership(
       [
         { x: 0, y: 0 },
@@ -37,7 +37,10 @@ describe("partitionBySelfOwnership", () => {
       map,
       null,
     );
-    expect(alreadyOwned).toEqual([{ x: 0, y: 0 }]);
-    expect(claimable).toEqual([{ x: 2, y: 2 }]);
+    expect(alreadyOwned).toEqual([]);
+    expect(claimable).toEqual([
+      { x: 0, y: 0 },
+      { x: 2, y: 2 },
+    ]);
   });
 });

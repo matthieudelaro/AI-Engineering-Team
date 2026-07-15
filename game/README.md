@@ -20,8 +20,8 @@ Win a timed external game (2-hour window) by:
 
 | Field | Value |
 |---|---|
-| **Player ID** | `094gdi` |
-| **Game ID** | `8sac` |
+| **Player ID** | `remotematthieu999` |
+| **Game ID** | `jbs9` |
 | **API URL (OpenAPI spec)** | `http://172.16.1.190:8000/openapi.json` |
 | **Upstream base** (`GAME_API_URL`) | `http://172.16.1.190:8000` |
 
@@ -111,8 +111,8 @@ cp .env.example .env
 |---|---|---|
 | `GAME_API_URL` | `http://172.16.1.190:8000` | Upstream base URL (gateway proxy target) |
 | `OPENAPI_URL` | `http://172.16.1.190:8000/openapi.json` | OpenAPI spec for endpoint discovery |
-| `PLAYER_ID` | `094gdi` | Our player identifier (`X-Player-Id` in event mode) |
-| `GAME_ID` | `7zav` | Active game session — pass as `game_id` on all API calls |
+| `PLAYER_ID` | `remotematthieu999` | Our player identifier (`X-Player-Id` in event mode) |
+| `GAME_ID` | `jbs9` | Active game session — pass as `game_id` on all API calls |
 | `AUTH_MODE` | `event` | `event` = `X-Player-Id` header; `token` = Bearer auth |
 | `GAME_API_TOKEN` | — | Bearer token injected by gateway |
 | `GAME_API_AUTH_HEADER` | `Authorization` | Header name for auth |
@@ -453,7 +453,7 @@ Run once to discover endpoints from the OpenAPI spec:
 
 ```bash
 # Connection (already in .env):
-#   PLAYER_ID=094gdi
+#   PLAYER_ID=remotematthieu999
 #   GAME_API_URL=http://172.16.1.190:8000
 #   OPENAPI_URL=http://172.16.1.190:8000/openapi.json
 
@@ -564,5 +564,5 @@ npm run policy test 001-init
 | Pollers | token-bucket, per-endpoint | ready |
 | Policy framework | supervisor + child processes | ready |
 | Policies | `001-init` | ready for API discovery |
-| Game API | `http://172.16.1.190:8000` | configured — player `094gdi` |
+| Game API | `http://172.16.1.190:8000` | configured — player `remotematthieu999`, game `jbs9` |
 | OpenAPI spec | `/openapi.json` | configured — discover endpoints next |

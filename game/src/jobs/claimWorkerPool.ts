@@ -558,6 +558,7 @@ async function autoClaimWorker(
 ): Promise<{ placed: number; rateLimitWaitMs: number }> {
   let placed = 0;
   let rateLimitWaitMs = 0;
+  let idleSpins = 0;
 
   while (!allocator.isStopped()) {
     const task = await allocator.acquireTask();
@@ -565,10 +566,15 @@ async function autoClaimWorker(
       if (allocator.isStopped()) {
         break;
       }
-      // Wait for in-flight claims to open new frontier cells.
+      idleSpins += 1;
+      // Pending frontier with no completable work — don't spin forever.
+      if (idleSpins > 200) {
+        break;
+      }
       await sleep(ALLOC_IDLE_MS);
       continue;
     }
+    idleSpins = 0;
 
     const result = await runClaimTask(ctx, task, null);
     placed += result.placed ? 1 : 0;

@@ -306,5 +306,24 @@ export function pickClaimTarget(
     }
   }
 
+  // Stale map can still show enclosed "owned" cells after we lost them
+  // (leaderboard tile_count is 0). Re-seed so we are not permanently idle.
+  if (self.tileCount === 0) {
+    const cx = Math.floor((map.bounds.min_x + map.bounds.max_x) / 2);
+    const cy = Math.floor((map.bounds.min_y + map.bounds.max_y) / 2);
+    const k = key(cx, cy);
+    if (!blocked.has(k) && !owned.has(k)) {
+      return { x: cx, y: cy };
+    }
+    for (let attempt = 0; attempt < 32; attempt += 1) {
+      const x = randomInt(map.bounds.min_x, map.bounds.max_x);
+      const y = randomInt(map.bounds.min_y, map.bounds.max_y);
+      const cell = key(x, y);
+      if (!blocked.has(cell) && !owned.has(cell)) {
+        return { x, y };
+      }
+    }
+  }
+
   return null;
 }

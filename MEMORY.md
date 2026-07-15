@@ -11,7 +11,8 @@ current: replace outdated lines in place, do not just append.
   after QA on security-relevant work. Roles live in `roles/`.
 
 ## In flight
-- Nothing yet. This fills in as we work.
+- Game `jbs9` / player `remotematthieu999` — stack IDs updated; connect via gateway.
 
 ## Learned
 - Game UI map “jumps” on API sync were from bounds `min_x`/`min_y` shifting world pixels without camera compensation, plus `fitToView` on every expansion. Fix: compensate translate; refit only on initial load.
+- New games with empty `tiles: []` broke map-stream bootstrap/persist (`tiles.length === 0` treated as failure), so claim jobs kept reading multi‑MB prior-game map rows from `game_states` and froze. Fix: allow empty usable maps; read cache one row at a time. Keep old `game_states` rows for learning — do not delete across games.

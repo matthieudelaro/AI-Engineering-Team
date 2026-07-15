@@ -10,8 +10,8 @@ const repoRoot = resolve(__dirname, "../..");
 loadEnv({ path: resolve(repoRoot, ".env") });
 
 const envSchema = z.object({
-  PLAYER_ID: z.string().min(1).default("094gdi"),
-  GAME_ID: z.string().min(1).default("8sac"),
+  PLAYER_ID: z.string().min(1).default("remotematthieu999"),
+  GAME_ID: z.string().min(1).default("jbs9"),
   GAME_API_URL: z.string().url(),
   GAME_API_TOKEN: z.string().default("your-token-here"),
   GAME_API_AUTH_HEADER: z.string().default("Authorization"),

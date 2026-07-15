@@ -16,24 +16,34 @@ export async function readCachedGameState<T = unknown>(
   db: Database,
   endpointKey: string,
 ): Promise<CachedGameState<T> | null> {
-  const rows = await db
-    .select()
-    .from(gameStates)
-    .where(eq(gameStates.endpointKey, endpointKey))
-    .orderBy(desc(gameStates.fetchedAt))
-    .limit(WALK_BACK_LIMIT);
+  // One row at a time — avoids loading multi‑MB prior-game snapshots in a batch.
+  for (let offset = 0; offset < WALK_BACK_LIMIT; offset += 1) {
+    const rows = await db
+      .select()
+      .from(gameStates)
+      .where(eq(gameStates.endpointKey, endpointKey))
+      .orderBy(desc(gameStates.fetchedAt))
+      .limit(1)
+      .offset(offset);
 
-  const row = pickUsableCachedRow(endpointKey, rows);
-  if (!row?.payloadJson || !row.fetchedAt) {
-    return null;
+    if (rows.length === 0) {
+      return null;
+    }
+
+    const row = pickUsableCachedRow(endpointKey, rows);
+    if (!row?.payloadJson || !row.fetchedAt) {
+      continue;
+    }
+
+    return {
+      endpointKey,
+      payload: row.payloadJson as T,
+      fetchedAt: row.fetchedAt.toISOString(),
+      etagOrHash: row.etagOrHash ?? null,
+    };
   }
 
-  return {
-    endpointKey,
-    payload: row.payloadJson as T,
-    fetchedAt: row.fetchedAt.toISOString(),
-    etagOrHash: row.etagOrHash ?? null,
-  };
+  return null;
 }
 
 export async function listCachedGameStates(
@@ -46,18 +56,22 @@ export async function listCachedGameStates(
   const result: Array<{ endpointKey: string; fetchedAt: string }> = [];
 
   for (const { endpointKey } of keys) {
+    // Metadata only — never pull payload_json for the listing endpoint.
     const rows = await db
-      .select()
+      .select({
+        fetchedAt: gameStates.fetchedAt,
+        etagOrHash: gameStates.etagOrHash,
+      })
       .from(gameStates)
       .where(eq(gameStates.endpointKey, endpointKey))
       .orderBy(desc(gameStates.fetchedAt))
-      .limit(WALK_BACK_LIMIT);
+      .limit(1);
 
-    const usable = pickUsableCachedRow(endpointKey, rows);
-    if (usable?.fetchedAt) {
+    const fetchedAt = rows[0]?.fetchedAt;
+    if (fetchedAt) {
       result.push({
         endpointKey,
-        fetchedAt: usable.fetchedAt.toISOString(),
+        fetchedAt: fetchedAt.toISOString(),
       });
     }
   }

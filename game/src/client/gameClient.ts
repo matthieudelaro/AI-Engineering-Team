@@ -54,6 +54,7 @@ export class GameClient {
       method,
       headers,
       body: payload,
+      signal: AbortSignal.timeout(10_000),
     });
 
     const text = await response.text();

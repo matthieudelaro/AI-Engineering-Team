@@ -115,7 +115,8 @@ export class TokenBucketRateLimiter {
    * full paced RPS so we don't spend an extra second at 4–8/s.
    */
   pauseFor(waitMs: number): void {
-    const capped = Math.max(0, waitMs);
+    // Never block the pool for more than 2s — bad Reset headers used to hang jobs.
+    const capped = Math.min(2_000, Math.max(0, waitMs));
     const until = Date.now() + capped;
     this.tokens = 0;
     this.lastRefillMs = Date.now();

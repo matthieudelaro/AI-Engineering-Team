@@ -72,14 +72,14 @@ export function buildOwnershipMap(
 }
 
 /**
- * Cells we must not place-tile on: already owned by us, reserved in-flight,
- * or occupied by another player (those return INVALID_TARGET and burn budget).
+ * Cells we must not place-tile on: already owned by us, or reserved in-flight.
+ * Adjacent enemy tiles are allowed — that's how you break out when surrounded.
  */
 export function blockedClaimCells(
   owned: Set<string>,
   pending?: Set<string>,
-  occupied?: Map<string, string | null>,
-  selfName?: string | null,
+  _occupied?: Map<string, string | null>,
+  _selfName?: string | null,
 ): Set<string> {
   const blocked = new Set(owned);
   if (pending) {
@@ -87,32 +87,24 @@ export function blockedClaimCells(
       blocked.add(key);
     }
   }
-  if (occupied) {
-    for (const [key, owner] of occupied) {
-      if (owner && owner !== selfName) {
-        blocked.add(key);
-      }
-    }
-  }
   return blocked;
 }
 
-/** Split tiles into ones we still need to claim vs ones to ack (owned or foreign). */
+/** Split tiles into ones we still need to claim vs ones we already own (local map). */
 export function partitionBySelfOwnership<T extends { x: number; y: number }>(
   tiles: T[],
   map: MapResponse,
   selfName: string | null,
 ): { claimable: T[]; alreadyOwned: T[] } {
-  const { owned, occupied } = buildOwnershipMap(map.tiles, selfName);
+  const { owned } = buildOwnershipMap(map.tiles, selfName);
   const claimable: T[] = [];
   const alreadyOwned: T[] = [];
   for (const tile of tiles) {
     const key = `${tile.x},${tile.y}`;
-    const owner = occupied.get(key);
-    if (owned.has(key) || (owner && owner !== selfName)) {
-      // Own tiles and foreign tiles are not claimable — ack out of the UI queue.
+    if (owned.has(key)) {
       alreadyOwned.push(tile);
     } else {
+      // Empty and enemy tiles stay claimable (attacks are valid place-tiles).
       claimable.push(tile);
     }
   }
@@ -290,14 +282,27 @@ export async function readLatestState<T>(
   db: Database,
   endpointKey: string,
 ): Promise<T | null> {
-  const rows = await db
-    .select()
-    .from(gameStates)
-    .where(eq(gameStates.endpointKey, endpointKey))
-    .orderBy(desc(gameStates.fetchedAt))
-    .limit(20);
-  const row = pickUsableCachedRow(endpointKey, rows);
-  return (row?.payloadJson as T | undefined) ?? null;
+  // Fetch one row at a time so a usable empty/new-game snapshot is not drowned
+  // by multi‑MB payloads from prior games in the same table.
+  const batchSize = 1;
+  const maxAttempts = 20;
+  for (let offset = 0; offset < maxAttempts; offset += batchSize) {
+    const rows = await db
+      .select()
+      .from(gameStates)
+      .where(eq(gameStates.endpointKey, endpointKey))
+      .orderBy(desc(gameStates.fetchedAt))
+      .limit(batchSize)
+      .offset(offset);
+    if (rows.length === 0) {
+      return null;
+    }
+    const row = pickUsableCachedRow(endpointKey, rows);
+    if (row) {
+      return (row.payloadJson as T | undefined) ?? null;
+    }
+  }
+  return null;
 }
 
 export interface SelfContext {
@@ -309,23 +314,21 @@ export async function resolveSelfContext(
   db: Database,
   cache: { value: SelfContext | null },
 ): Promise<SelfContext> {
-  if (cache.value) {
-    return cache.value;
-  }
-
   const lbState = await readLatestState<LeaderboardResponse>(db, "leaderboard");
   if (lbState?.entries) {
     const self = lbState.entries.find((e) => e.is_self);
     if (self) {
-      cache.value = {
+      const next: SelfContext = {
         name: self.display_name,
         tileCount: self.tile_count ?? 0,
       };
-      return cache.value;
+      // Always refresh — a new game changes display name / tile count.
+      cache.value = next;
+      return next;
     }
   }
 
-  return { name: null, tileCount: 0 };
+  return cache.value ?? { name: null, tileCount: 0 };
 }
 
 /** Map snapshot from pollers — never calls the game API directly. */
@@ -394,19 +397,22 @@ export function msUntilRateLimitReset(
   nowMs: number = Date.now(),
 ): number {
   const msToNextWallSec = 1000 - (nowMs % 1000) + 50;
+  const capMs = 2_000;
   if (typeof resetUnixSec === "number" && Number.isFinite(resetUnixSec) && resetUnixSec > 0) {
-    const untilReset = resetUnixSec * 1000 - nowMs + 50;
+    // Accept unix seconds or unix milliseconds.
+    const resetMs = resetUnixSec > 1e12 ? resetUnixSec : resetUnixSec * 1000;
+    const untilReset = resetMs - nowMs + 50;
     // API often sets X-RateLimit-Reset to the *current* unix second while the
     // window is still closed. A past/near-zero wait must advance to the next
     // wall-clock second or we immediate-retry into another 429.
-    return Math.max(msToNextWallSec, untilReset);
+    return Math.min(capMs, Math.max(msToNextWallSec, untilReset));
   }
   // API often returns retry_after: 0 meaning "window edge / retry ASAP".
   if (typeof retryAfterSec === "number" && Number.isFinite(retryAfterSec)) {
     if (retryAfterSec <= 0) {
       return msToNextWallSec;
     }
-    return Math.max(50, retryAfterSec * 1000);
+    return Math.min(capMs, Math.max(50, retryAfterSec * 1000));
   }
   return msToNextWallSec;
 }

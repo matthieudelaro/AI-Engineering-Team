@@ -196,7 +196,8 @@ async function persistMapState(
   previousHash: string | null,
 ): Promise<string> {
   const payload = mapStateToResponse(state);
-  if (payload.tiles.length === 0 || !isUsableGameStatePayload("map", payload)) {
+  // Empty tiles are valid at game start — still persist bounds so claim jobs can seed.
+  if (!isUsableGameStatePayload("map", payload)) {
     return previousHash ?? hashPayload(payload);
   }
   const payloadHash = hashPayload(payload);
@@ -287,7 +288,7 @@ export async function startMapStream(
     }
     const client = new GameClient(env, { source: "poller" });
     const snapshot = await fetchInitialMap(client, snapshotPath);
-    if (!snapshot?.tiles?.length) {
+    if (!snapshot || !isUsableGameStatePayload("map", snapshot)) {
       return;
     }
     mapState = replaceMapStateFromSnapshot(snapshot);
@@ -300,8 +301,14 @@ export async function startMapStream(
   const bootstrap = async (): Promise<boolean> => {
     const client = new GameClient(env, { source: "poller" });
     const snapshot = await fetchInitialMap(client, snapshotPath);
-    if (!snapshot?.tiles?.length) {
-      await logMapStreamEvent(db, "warn", "map_stream_bootstrap_failed", "initial map fetch returned no tiles");
+    // New games often have bounds but zero tiles — that is a valid bootstrap.
+    if (!snapshot || !isUsableGameStatePayload("map", snapshot)) {
+      await logMapStreamEvent(
+        db,
+        "warn",
+        "map_stream_bootstrap_failed",
+        "initial map fetch returned unusable payload",
+      );
       return false;
     }
     mapState = replaceMapStateFromSnapshot(snapshot);
