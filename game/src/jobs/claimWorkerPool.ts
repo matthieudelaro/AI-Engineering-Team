@@ -9,6 +9,7 @@ import {
   logJobEvent,
   markTileOwned,
   msUntilRateLimitReset,
+  ownerName,
   partitionBySelfOwnership,
   pickBridgeStepToward,
   PLACE_TILE_WORKER_COUNT,
@@ -316,6 +317,16 @@ async function runClaimTask(
     releasePending(ctx, current.x, current.y);
     return { placed: false, rateLimitWaitMs };
   }
+  // Map is source of truth — skip place-tile if we already own it locally.
+  const mapTile = ctx.map.tiles.find((t) => t.x === current.x && t.y === current.y);
+  if (ctx.self.name && ownerName(mapTile?.ownership ?? "") === ctx.self.name) {
+    ctx.ownedSet.add(k);
+    if (current.fromUiQueue && allocator) {
+      allocator.ackTile(current.x, current.y);
+    }
+    releasePending(ctx, current.x, current.y);
+    return { placed: false, rateLimitWaitMs };
+  }
 
   while (true) {
     await ctx.limiter.acquire();
@@ -395,6 +406,15 @@ async function runClaimTask(
       y: current.y,
       fromUiQueue: current.fromUiQueue,
     });
+    // INVALID_TARGET on a cell we thought was free usually means we already own
+    // it (fog). Learn that so we stop burning the rate budget on retries.
+    if (isInvalidTarget(result.rejected?.reason) && ctx.self.name) {
+      ctx.ownedSet.add(k);
+      markTileOwned(ctx.map, ctx.self.name, current.x, current.y);
+      if (allocator) {
+        allocator.noteOwned(current.x, current.y);
+      }
+    }
     if (current.fromUiQueue && allocator) {
       // INVALID_TARGET after an adjacent/bridge attempt will not become valid by
       // requeueing immediately — that just burns rate limit. Ack and drop.

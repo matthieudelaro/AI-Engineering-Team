@@ -158,6 +158,13 @@ npm run gateway    # terminal 1 — proxy with X-Player-Id auth
 npm run ui         # terminal 2 — http://localhost:5173
 ```
 
+Brush modifiers (hold while painting):
+
+| Key | Effect |
+|---|---|
+| Shift / A / S / D | Filled Manhattan diamond brushes (larger as listed) |
+| **F** | **Edge lasso**: enqueue the hollow 5×5 square ring (16 edge tiles) around the cell; interior is not queued (game fill). Works on click/drag and on hover while F is held. |
+
 The UI proxies API calls through the gateway (`/api` → `localhost:3100`) so claims are audited in `api_calls`.
 
 Manual UI claims take priority via a shared gateway queue: the UI enqueues desired tiles on `POST /_gateway/ui-claim-queue` (deduped while pending or in-flight). Whenever that queue is non-empty, `tileClaimer` drains it **only** (FIFO among currently claimable tiles). Place-tile starts are paced slightly under the API cap (~18/s) with a continuous pipeline (up to ~24 in flight). Claims must be orthogonally adjacent to owned land — the drain prefers adjacent queued tiles, bridges toward the rest when needed, and updates the local map on accept so we do not burn the budget on `INVALID_TARGET`. On `REJECTION_REASON_RATE_LIMITED` / HTTP 429, the job **stops starting new claims**, waits until `X-RateLimit-Reset` (falling back to `retry_after`), puts the rate-limited tile back at the **front**, and retries it before continuing. Soft rejects (except `INVALID_TARGET`) get one retry within a second. When the queue is empty, the claimer falls back to the automatic mix (5% random · 40% grow · 55% bridge) with the same pacing. Enqueue also calls `touchUiClaimActivity()` so the flag spawner backs off while the user paints (`UI_CLAIM_PRIORITY_MS`, default `1000`).

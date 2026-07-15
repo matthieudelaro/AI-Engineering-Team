@@ -43,8 +43,9 @@ function pickRandomCell(
   map: MapResponse,
   owned: Set<string>,
   blocked: Set<string>,
+  occupied?: Map<string, string | null>,
 ): Point | null {
-  return pickGrowCell(map, owned, blocked, []);
+  return pickGrowCell(map, owned, blocked, [], occupied);
 }
 
 function growFromAnchors(
@@ -52,8 +53,10 @@ function growFromAnchors(
   blocked: Set<string>,
   anchors: Point[],
   bounds: MapResponse["bounds"],
+  occupied?: Map<string, string | null>,
 ): Point | null {
-  const candidates: Point[] = [];
+  const empty: Point[] = [];
+  const other: Point[] = [];
   const seen = new Set<string>();
 
   for (const anchor of anchors) {
@@ -64,14 +67,20 @@ function growFromAnchors(
       const x = anchor.x + dx;
       const y = anchor.y + dy;
       const k = key(x, y);
-      if (seen.has(k) || blocked.has(k) || !inBounds(x, y, bounds)) {
+      if (seen.has(k) || owned.has(k) || blocked.has(k) || !inBounds(x, y, bounds)) {
         continue;
       }
       seen.add(k);
-      candidates.push({ x, y });
+      const owner = occupied?.get(k);
+      if (!owner || owner === "neutral") {
+        empty.push({ x, y });
+      } else {
+        other.push({ x, y });
+      }
     }
   }
 
+  const candidates = empty.length > 0 ? empty : other;
   if (candidates.length === 0) {
     return null;
   }
@@ -83,8 +92,15 @@ function pickGrowCell(
   owned: Set<string>,
   blocked: Set<string>,
   recentClaims: Point[],
+  occupied?: Map<string, string | null>,
 ): Point | null {
-  const fromRecent = growFromAnchors(owned, blocked, recentClaims, map.bounds);
+  const fromRecent = growFromAnchors(
+    owned,
+    blocked,
+    recentClaims,
+    map.bounds,
+    occupied,
+  );
   if (fromRecent) {
     return fromRecent;
   }
@@ -100,7 +116,7 @@ function pickGrowCell(
     const [xs, ys] = k.split(",");
     anchors.push({ x: Number(xs), y: Number(ys) });
   }
-  return growFromAnchors(owned, blocked, anchors, map.bounds);
+  return growFromAnchors(owned, blocked, anchors, map.bounds, occupied);
 }
 
 function findConnectedComponents(tiles: Point[]): Point[][] {
@@ -255,12 +271,13 @@ function pickForStrategy(
   owned: Set<string>,
   blocked: Set<string>,
   recentClaims: Point[],
+  occupied?: Map<string, string | null>,
 ): Point | null {
   switch (strategy) {
     case "random":
-      return pickRandomCell(map, owned, blocked);
+      return pickRandomCell(map, owned, blocked, occupied);
     case "grow":
-      return pickGrowCell(map, owned, blocked, recentClaims);
+      return pickGrowCell(map, owned, blocked, recentClaims, occupied);
     case "bridge":
       return pickBridgeCell(map, owned, blocked);
   }
@@ -281,7 +298,14 @@ export function pickClaimTarget(
   pendingSet?: Set<string>,
 ): Point | null {
   const { owned: ownedFromMap, occupied } = buildOwnershipMap(map.tiles, self.name);
-  const owned = ownedSet ?? ownedFromMap;
+  // Union map + live set — an incomplete ownedSet must not hide map ownership
+  // (that caused us to re-place our own tiles → 100% INVALID_TARGET).
+  const owned = new Set(ownedFromMap);
+  if (ownedSet) {
+    for (const k of ownedSet) {
+      owned.add(k);
+    }
+  }
   const blocked = blockedClaimCells(owned, pendingSet, occupied, self.name);
   const primary = pickStrategy();
   const tried = new Set<Strategy>();
@@ -291,7 +315,14 @@ export function pickClaimTarget(
       continue;
     }
     tried.add(strategy);
-    const target = pickForStrategy(strategy, map, owned, blocked, recentClaims);
+    const target = pickForStrategy(
+      strategy,
+      map,
+      owned,
+      blocked,
+      recentClaims,
+      occupied,
+    );
     if (target !== null) {
       return target;
     }

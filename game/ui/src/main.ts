@@ -23,6 +23,7 @@ import { applyMapStreamEvent, subscribeMapStream, type MapStreamEvent } from "./
 import {
   brushRadiusFromModifiers,
   diamondCells,
+  lassoEdgeCells,
   lineCells,
   type BrushModifiers,
 } from "./claimDiamond.js";
@@ -112,7 +113,11 @@ let painting = false;
 let paintPointerId: number | null = null;
 let lastPaintCell: { x: number; y: number } | null = null;
 let lastUiActivityTouch = 0;
-const heldBrushKeys = { a: false, s: false, d: false };
+const heldBrushKeys = { a: false, s: false, d: false, f: false };
+/** Cell under the pointer when not painting (for F-hover). */
+let hoverCell: { x: number; y: number } | null = null;
+/** Last cell stamped by F-hover so we do not re-stamp every move. */
+let lastLassoHoverCell: { x: number; y: number } | null = null;
 const tileIndex = new Map<string, Tile>();
 const pendingCells = new Set<string>();
 /** Retry content-fit when the viewport/board was not laid out yet. */
@@ -440,7 +445,14 @@ function brushModifiersFromEvent(event: PointerEvent | MouseEvent | KeyboardEven
     a: heldBrushKeys.a,
     s: heldBrushKeys.s,
     d: heldBrushKeys.d,
+    f: heldBrushKeys.f,
   };
+}
+
+function stampLasso(x: number, y: number): void {
+  for (const cell of lassoEdgeCells(x, y)) {
+    tryClaimOne(cell.x, cell.y);
+  }
 }
 
 function stampBrush(x: number, y: number, radius: number): void {
@@ -458,15 +470,39 @@ function paintStroke(x: number, y: number, mods: BrushModifiers): void {
   if (playerColors.selfName === null) {
     return;
   }
-  const radius = brushRadiusFromModifiers(mods);
   const path =
     lastPaintCell === null
       ? [{ x, y }]
       : lineCells(lastPaintCell, { x, y });
-  for (const cell of path) {
-    stampBrush(cell.x, cell.y, radius);
+  if (mods.f) {
+    for (const cell of path) {
+      stampLasso(cell.x, cell.y);
+    }
+  } else {
+    const radius = brushRadiusFromModifiers(mods);
+    for (const cell of path) {
+      stampBrush(cell.x, cell.y, radius);
+    }
   }
   lastPaintCell = { x, y };
+}
+
+/** F held + hover (no button): stamp one lasso when the hit cell changes. */
+function maybeLassoHover(x: number, y: number): void {
+  if (!heldBrushKeys.f || playerColors.selfName === null) {
+    return;
+  }
+  if (
+    lastLassoHoverCell !== null &&
+    lastLassoHoverCell.x === x &&
+    lastLassoHoverCell.y === y
+  ) {
+    return;
+  }
+  lastLassoHoverCell = { x, y };
+  maybeTouchUiActivity();
+  stampLasso(x, y);
+  claimBatcher.flushNow();
 }
 
 function tileChanged(previous: Tile | undefined, next: Tile): boolean {
@@ -643,6 +679,11 @@ function setBrushKey(code: string, down: boolean): void {
     heldBrushKeys.s = down;
   } else if (code === "KeyD") {
     heldBrushKeys.d = down;
+  } else if (code === "KeyF") {
+    heldBrushKeys.f = down;
+    if (!down) {
+      lastLassoHoverCell = null;
+    }
   }
 }
 
@@ -651,6 +692,9 @@ window.addEventListener("keydown", (event) => {
     return;
   }
   setBrushKey(event.code, true);
+  if (event.code === "KeyF" && !painting && hoverCell) {
+    maybeLassoHover(hoverCell.x, hoverCell.y);
+  }
 });
 
 window.addEventListener("keyup", (event) => {
@@ -661,6 +705,9 @@ window.addEventListener("blur", () => {
   heldBrushKeys.a = false;
   heldBrushKeys.s = false;
   heldBrushKeys.d = false;
+  heldBrushKeys.f = false;
+  lastLassoHoverCell = null;
+  // keep hoverCell — pointer position is still valid when focus returns
 });
 
 boardEl.addEventListener("pointerdown", (event) => {
@@ -682,10 +729,14 @@ boardEl.addEventListener("pointermove", (event) => {
   if (!painting) {
     const pos = cellFromPointer(event);
     if (pos) {
+      hoverCell = { x: pos.x, y: pos.y };
       const tile = tileIndex.get(cellKey(pos.x, pos.y));
       boardEl.title = cellTitle(pos.x, pos.y, tile);
+      maybeLassoHover(pos.x, pos.y);
     } else {
+      hoverCell = null;
       boardEl.removeAttribute("title");
+      lastLassoHoverCell = null;
     }
     return;
   }

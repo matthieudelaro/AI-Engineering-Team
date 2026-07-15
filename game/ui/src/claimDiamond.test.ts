@@ -6,9 +6,24 @@ import {
   BRUSH_RADIUS_SHIFT,
   brushRadiusFromModifiers,
   diamondCells,
+  LASSO_HALF_EXTENT,
+  LASSO_SQUARE_SIZE,
+  lassoEdgeCells,
   lineCells,
   SHIFT_CLAIM_DIAMOND_RADIUS,
+  type BrushModifiers,
 } from "./claimDiamond.js";
+
+function mods(partial: Partial<BrushModifiers> = {}): BrushModifiers {
+  return {
+    shift: false,
+    a: false,
+    s: false,
+    d: false,
+    f: false,
+    ...partial,
+  };
+}
 
 describe("diamondCells", () => {
   it("returns a single cell for radius 0", () => {
@@ -42,37 +57,74 @@ describe("diamondCells", () => {
   });
 });
 
+describe("lassoEdgeCells", () => {
+  it("returns 16 edge tiles for the default 5×5 lasso", () => {
+    expect(LASSO_SQUARE_SIZE).toBe(5);
+    expect(LASSO_HALF_EXTENT).toBe(2);
+    const cells = lassoEdgeCells(0, 0);
+    expect(cells).toHaveLength(4 * (LASSO_SQUARE_SIZE - 1));
+    expect(cells).toHaveLength(16);
+  });
+
+  it("includes corners and excludes the interior", () => {
+    const cells = lassoEdgeCells(0, 0);
+    expect(cells).toContainEqual({ x: -2, y: -2 });
+    expect(cells).toContainEqual({ x: 2, y: -2 });
+    expect(cells).toContainEqual({ x: 2, y: 2 });
+    expect(cells).toContainEqual({ x: -2, y: 2 });
+    expect(cells).not.toContainEqual({ x: 0, y: 0 });
+    expect(cells).not.toContainEqual({ x: 1, y: 0 });
+    expect(cells).not.toContainEqual({ x: 0, y: 1 });
+  });
+
+  it("stays within the 5×5 bounds and has no duplicates", () => {
+    const cells = lassoEdgeCells(10, 20);
+    const keys = new Set(cells.map((c) => `${c.x},${c.y}`));
+    expect(keys.size).toBe(cells.length);
+    for (const cell of cells) {
+      expect(cell.x).toBeGreaterThanOrEqual(10 - LASSO_HALF_EXTENT);
+      expect(cell.x).toBeLessThanOrEqual(10 + LASSO_HALF_EXTENT);
+      expect(cell.y).toBeGreaterThanOrEqual(20 - LASSO_HALF_EXTENT);
+      expect(cell.y).toBeLessThanOrEqual(20 + LASSO_HALF_EXTENT);
+      const onEdge =
+        cell.x === 10 - LASSO_HALF_EXTENT ||
+        cell.x === 10 + LASSO_HALF_EXTENT ||
+        cell.y === 20 - LASSO_HALF_EXTENT ||
+        cell.y === 20 + LASSO_HALF_EXTENT;
+      expect(onEdge).toBe(true);
+    }
+  });
+
+  it("walks clockwise from top-left", () => {
+    const cells = lassoEdgeCells(0, 0);
+    expect(cells[0]).toEqual({ x: -2, y: -2 });
+    expect(cells[1]).toEqual({ x: -1, y: -2 });
+    expect(cells[4]).toEqual({ x: 2, y: -2 });
+    expect(cells[5]).toEqual({ x: 2, y: -1 });
+  });
+});
+
 describe("brushRadiusFromModifiers", () => {
   it("returns 0 with no modifiers", () => {
-    expect(brushRadiusFromModifiers({ shift: false, a: false, s: false, d: false })).toBe(0);
+    expect(brushRadiusFromModifiers(mods())).toBe(0);
   });
 
   it("doubles radius for Shift → A → S → D", () => {
     expect(BRUSH_RADIUS_A).toBe(BRUSH_RADIUS_SHIFT * 2);
     expect(BRUSH_RADIUS_S).toBe(BRUSH_RADIUS_A * 2);
     expect(BRUSH_RADIUS_D).toBe(BRUSH_RADIUS_S * 2);
-    expect(brushRadiusFromModifiers({ shift: true, a: false, s: false, d: false })).toBe(
-      BRUSH_RADIUS_SHIFT,
-    );
-    expect(brushRadiusFromModifiers({ shift: false, a: true, s: false, d: false })).toBe(
-      BRUSH_RADIUS_A,
-    );
-    expect(brushRadiusFromModifiers({ shift: false, a: false, s: true, d: false })).toBe(
-      BRUSH_RADIUS_S,
-    );
-    expect(brushRadiusFromModifiers({ shift: false, a: false, s: false, d: true })).toBe(
-      BRUSH_RADIUS_D,
-    );
+    expect(brushRadiusFromModifiers(mods({ shift: true }))).toBe(BRUSH_RADIUS_SHIFT);
+    expect(brushRadiusFromModifiers(mods({ a: true }))).toBe(BRUSH_RADIUS_A);
+    expect(brushRadiusFromModifiers(mods({ s: true }))).toBe(BRUSH_RADIUS_S);
+    expect(brushRadiusFromModifiers(mods({ d: true }))).toBe(BRUSH_RADIUS_D);
   });
 
   it("prefers the largest active brush key", () => {
-    expect(brushRadiusFromModifiers({ shift: true, a: true, s: false, d: false })).toBe(
-      BRUSH_RADIUS_A,
-    );
-    expect(brushRadiusFromModifiers({ shift: true, a: true, s: true, d: false })).toBe(
+    expect(brushRadiusFromModifiers(mods({ shift: true, a: true }))).toBe(BRUSH_RADIUS_A);
+    expect(brushRadiusFromModifiers(mods({ shift: true, a: true, s: true }))).toBe(
       BRUSH_RADIUS_S,
     );
-    expect(brushRadiusFromModifiers({ shift: true, a: true, s: true, d: true })).toBe(
+    expect(brushRadiusFromModifiers(mods({ shift: true, a: true, s: true, d: true }))).toBe(
       BRUSH_RADIUS_D,
     );
   });

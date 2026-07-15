@@ -12,15 +12,24 @@ export const BRUSH_RADIUS_A = BRUSH_RADIUS_SHIFT * 2;
 export const BRUSH_RADIUS_S = BRUSH_RADIUS_A * 2;
 export const BRUSH_RADIUS_D = BRUSH_RADIUS_S * 2;
 
+/** Odd size of the F-key lasso bounding square (edge ring only). */
+export const LASSO_SQUARE_SIZE = 5;
+
+/** Half-extent from center to edge for LASSO_SQUARE_SIZE (floor((size-1)/2)). */
+export const LASSO_HALF_EXTENT = (LASSO_SQUARE_SIZE - 1) / 2;
+
 export interface BrushModifiers {
   shift: boolean;
   a: boolean;
   s: boolean;
   d: boolean;
+  /** F-key edge lasso; when true, overrides diamond brushes. */
+  f: boolean;
 }
 
 /**
  * Brush Manhattan radius from modifiers. D > S > A > Shift; none → 0 (single cell).
+ * Callers should check `mods.f` first and use `lassoEdgeCells` instead of a diamond.
  */
 export function brushRadiusFromModifiers(mods: BrushModifiers): number {
   if (mods.d) {
@@ -36,6 +45,41 @@ export function brushRadiusFromModifiers(mods: BrushModifiers): number {
     return BRUSH_RADIUS_SHIFT;
   }
   return 0;
+}
+
+/**
+ * Hollow axis-aligned square ring around (cx, cy). Interior is omitted so the
+ * game can fill enclosed cells. Clockwise from top-left for contiguous edges.
+ */
+export function lassoEdgeCells(
+  cx: number,
+  cy: number,
+  halfExtent = LASSO_HALF_EXTENT,
+): Point[] {
+  const minX = cx - halfExtent;
+  const maxX = cx + halfExtent;
+  const minY = cy - halfExtent;
+  const maxY = cy + halfExtent;
+  const cells: Point[] = [];
+
+  // Top edge left → right
+  for (let x = minX; x <= maxX; x++) {
+    cells.push({ x, y: minY });
+  }
+  // Right edge top+1 → bottom
+  for (let y = minY + 1; y <= maxY; y++) {
+    cells.push({ x: maxX, y });
+  }
+  // Bottom edge right-1 → left
+  for (let x = maxX - 1; x >= minX; x--) {
+    cells.push({ x, y: maxY });
+  }
+  // Left edge bottom-1 → top+1
+  for (let y = maxY - 1; y > minY; y--) {
+    cells.push({ x: minX, y });
+  }
+
+  return cells;
 }
 
 /** Cells in a diamond (losange) around (cx, cy), center first then rings outward. */
