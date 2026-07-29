@@ -43,4 +43,26 @@ describe("partitionBySelfOwnership", () => {
       { x: 2, y: 2 },
     ]);
   });
+
+  it("routes permanently unclaimable nuked tiles to alreadyOwned (ack path)", () => {
+    const nukedMap: MapResponse = {
+      bounds: { min_x: 0, min_y: 0, max_x: 2, max_y: 2 },
+      tiles: [
+        { x: 0, y: 0, ownership: { owned: "Me" } },
+        { x: 1, y: 0, ownership: "nuked" },
+      ],
+    };
+
+    const { claimable, alreadyOwned } = partitionBySelfOwnership(
+      [
+        { x: 1, y: 0 },
+        { x: 0, y: 1 },
+      ],
+      nukedMap,
+      "Me",
+    );
+
+    expect(alreadyOwned).toEqual([{ x: 1, y: 0 }]);
+    expect(claimable).toEqual([{ x: 0, y: 1 }]);
+  });
 });

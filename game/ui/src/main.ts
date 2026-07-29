@@ -2,10 +2,12 @@ import "./style.css";
 import {
   bindRateBudget,
   enqueueUiClaims,
+  fetchFlags,
   fetchLeaderboard,
   fetchMapLive,
   fetchMapResolved,
   formatCacheAge,
+  isNukedTile,
   isSelfOwner,
   isSelfTile,
   mapStreamUrl,
@@ -14,7 +16,12 @@ import {
   touchUiClaimActivity,
   type CachedReadMeta,
 } from "./api.js";
-import { buildPlayerColors, mapColorForPlayer } from "./playerColors.js";
+import {
+  activeFlagKeys,
+  cellHasActiveFlag,
+  mergeFlagCoordsIntoRender,
+} from "./flagOverlay.js";
+import { SELF_MAP_COLOR, buildPlayerColors, mapColorForPlayer } from "./playerColors.js";
 import { initMapZoom } from "./mapZoom.js";
 import { initApiConsole, logApiCall } from "./apiConsole.js";
 import { initRatePanel } from "./ratePanel.js";
@@ -29,6 +36,7 @@ import {
 } from "./claimDiamond.js";
 import { UiClaimBatcher } from "./uiClaimBatch.js";
 import { PLAYER_ID } from "./config.js";
+import { UI_FEATURES } from "./features.js";
 import { RateBudget } from "./rateBudget.js";
 import {
   BoardRenderer,
@@ -40,6 +48,8 @@ import type { BoundBox, LeaderboardEntry, MapResponse, PlayerColors, Tile } from
 const LEADERBOARD_POLL_MS = 3000;
 /** Max staleness for map display — sync from postgres cache on this interval. */
 const MAP_SYNC_MS = 5000;
+/** Flags cache poll — same cadence as map sync (fog cells omit has_flag). */
+const FLAGS_POLL_MS = MAP_SYNC_MS;
 const statsEl = document.getElementById("stats");
 const statusEl = document.getElementById("status");
 const boardEl = document.getElementById("board");
@@ -85,17 +95,35 @@ const mapZoom = initMapZoom(boardViewportEl, {
   },
 });
 
-initApiConsole(apiConsoleEl);
-initRatePanel(ratePanelEl);
+function markPanelLightModeDisabled(root: HTMLElement): void {
+  root.replaceChildren();
+  const note = document.createElement("p");
+  note.textContent = "disabled (light mode)";
+  root.appendChild(note);
+}
+
+if (UI_FEATURES.apiConsole) {
+  initApiConsole(apiConsoleEl);
+} else {
+  markPanelLightModeDisabled(apiConsoleEl);
+}
+
+if (UI_FEATURES.ratePanel) {
+  initRatePanel(ratePanelEl);
+} else {
+  markPanelLightModeDisabled(ratePanelEl);
+}
 
 const rateBudget = new RateBudget();
 bindRateBudget(rateBudget);
 
 let playerColors: PlayerColors = {
   selfName: null,
-  selfColor: "#ff2d95",
+  selfColor: SELF_MAP_COLOR,
   byName: new Map(),
 };
+/** Active non-nuked flag cells from gateway flags cache (`x,y` keys). */
+let activeFlags = new Set<string>();
 
 let latestMap: MapResponse | null = null;
 let latestLeaderboard: LeaderboardEntry[] = [];
@@ -140,9 +168,13 @@ function clearLocalPendingClaims(): void {
 }
 
 if (claimQueuePanelEl) {
-  initClaimQueuePanel(claimQueuePanelEl, {
-    onCleared: clearLocalPendingClaims,
-  });
+  if (UI_FEATURES.claimQueuePanel) {
+    initClaimQueuePanel(claimQueuePanelEl, {
+      onCleared: clearLocalPendingClaims,
+    });
+  } else {
+    markPanelLightModeDisabled(claimQueuePanelEl);
+  }
 }
 
 function cellKey(x: number, y: number): string {
@@ -245,7 +277,12 @@ async function loadIdentity(): Promise<void> {
     const { data: leaderboard, meta } = await fetchLeaderboard();
     leaderboardCacheAge = formatCacheAge(meta.fetchedAt);
     latestLeaderboard = leaderboard.entries;
-    const resolved = buildPlayerColors(leaderboard.entries);
+    const previous: PlayerColors = {
+      selfName: playerColors.selfName,
+      selfColor: playerColors.selfColor,
+      byName: new Map(playerColors.byName),
+    };
+    const resolved = buildPlayerColors(leaderboard.entries, previous);
     playerColors.selfName = resolved.selfName;
     playerColors.selfColor = resolved.selfColor;
     playerColors.byName.clear();
@@ -266,6 +303,28 @@ async function loadIdentity(): Promise<void> {
     err.className = "leaderboard-empty";
     err.textContent = message;
     leaderboardEl.appendChild(err);
+  }
+}
+
+async function loadFlags(): Promise<void> {
+  try {
+    const { data } = await fetchFlags();
+    const next = activeFlagKeys(data.flags);
+    let changed = next.size !== activeFlags.size;
+    if (!changed) {
+      for (const key of next) {
+        if (!activeFlags.has(key)) {
+          changed = true;
+          break;
+        }
+      }
+    }
+    activeFlags = next;
+    if (changed && latestMap && !painting) {
+      renderBoard(latestMap);
+    }
+  } catch {
+    // Keep last good flag overlay; map tiles may still carry has_flag.
   }
 }
 
@@ -292,14 +351,14 @@ function cellStateFor(x: number, y: number, tile: Tile | undefined): BoardCellSt
   return {
     fill: colorForTile(tile),
     isSelf: isSelfOwner(owner, playerColors.selfName, PLAYER_ID),
-    hasFlag: tile?.has_flag ?? false,
+    hasFlag: cellHasActiveFlag(x, y, tile?.has_flag ?? false, activeFlags),
     isPending: pendingCells.has(cellKey(x, y)),
   };
 }
 
 function cellTitle(x: number, y: number, tile: Tile | undefined): string {
   const owner = tile ? ownershipName(tile.ownership) : null;
-  if (tile?.has_flag) {
+  if (cellHasActiveFlag(x, y, tile?.has_flag ?? false, activeFlags)) {
     return `${owner ?? "unknown"} — flag (${x}, ${y})`;
   }
   if (owner) {
@@ -357,7 +416,7 @@ function collectRenderCoords(): Array<{ x: number; y: number }> {
       y: Number.parseInt(ys!, 10),
     });
   }
-  return coords;
+  return mergeFlagCoordsIntoRender(coords, activeFlags);
 }
 
 /** Fit the camera once viewport and world sizes are ready. */
@@ -426,8 +485,19 @@ function markCellPending(x: number, y: number): void {
   boardRenderer.paintCell(x, y, cellStateFor(x, y, tile));
 }
 
+function isNukedMapTile(x: number, y: number): boolean {
+  const tile = tileIndex.get(cellKey(x, y));
+  if (!tile) {
+    return false;
+  }
+  return isNukedTile(tile.ownership);
+}
+
 function tryClaimOne(x: number, y: number): void {
   if (isOwnTile(x, y)) {
+    return;
+  }
+  if (isNukedMapTile(x, y)) {
     return;
   }
   const k = cellKey(x, y);
@@ -871,14 +941,21 @@ async function init(): Promise<void> {
     // cache miss — live refresh below
   }
   await refreshMap();
-  streamCatchingUp = true;
-  subscribeMapStream(mapStreamUrl(), {
-    onBatch: handleMapStreamBatch,
-    onOffline: handleStreamOffline,
-    onConnected: handleStreamConnected,
-  });
+  await loadFlags();
+  if (UI_FEATURES.mapStream) {
+    streamCatchingUp = true;
+    subscribeMapStream(mapStreamUrl(), {
+      onBatch: handleMapStreamBatch,
+      onOffline: handleStreamOffline,
+      onConnected: handleStreamConnected,
+    });
+  } else {
+    streamCatchingUp = false;
+    mapLive = false;
+  }
   setInterval(() => void loadIdentity(), LEADERBOARD_POLL_MS);
   setInterval(() => void refreshMap(), MAP_SYNC_MS);
+  setInterval(() => void loadFlags(), FLAGS_POLL_MS);
 }
 
 void init();

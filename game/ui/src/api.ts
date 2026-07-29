@@ -401,18 +401,40 @@ export function isSelfTile(
   return isSelfOwner(ownershipName(ownership), selfName, playerId);
 }
 
-/** Player color from tile ownership object, else resolved leaderboard color. */
+/** Permanently unclaimable map ownership (not flags[].nuked). */
+export function isNukedOwnership(
+  ownership: string | Record<string, unknown>,
+): boolean {
+  if (typeof ownership === "string") {
+    return ownership === "nuked";
+  }
+  if (typeof ownership === "object" && ownership !== null) {
+    for (const key of ["owned", "display_name", "name"]) {
+      if (ownership[key] === "nuked") {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+export function isNukedTile(
+  ownership: string | Record<string, unknown> | undefined,
+): boolean {
+  if (ownership === undefined) {
+    return false;
+  }
+  return isNukedOwnership(ownership);
+}
+
+/**
+ * Resolve tile fill from identity colors — never use ownership.color from the
+ * map payload (that field can track rank-sensitive server palettes).
+ */
 export function ownershipColor(
   ownership: string | Record<string, unknown>,
   colors: PlayerColors,
 ): string | null {
-  if (typeof ownership === "object" && ownership !== null) {
-    const direct = ownership["color"];
-    if (typeof direct === "string" && direct !== "") {
-      return direct;
-    }
-  }
-
   const owner = ownershipName(ownership);
   if (!owner) {
     return null;

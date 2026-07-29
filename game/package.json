@@ -11,6 +11,7 @@
     "gateway": "tsx src/cli.ts gateway",
     "pollers": "tsx src/cli.ts pollers",
     "jobs": "tsx src/cli.ts jobs",
+    "nuke-flags": "tsx scripts/nuke-owned-flags-loop.ts",
     "start": "tsx src/cli.ts start",
     "status": "tsx src/cli.ts status",
     "policy": "tsx src/cli.ts policy",

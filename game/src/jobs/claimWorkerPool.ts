@@ -6,6 +6,8 @@ import { pickClaimTarget, type Point } from "./claimStrategy.js";
 import {
   ackUiClaims,
   findNextAdjacentUiClaimIndex,
+  excludeOutOfBoundsCell,
+  isNukedOwnership,
   logJobEvent,
   markTileOwned,
   msUntilRateLimitReset,
@@ -30,6 +32,10 @@ const UI_REFILL_BATCH = 60;
 
 export function isInvalidTarget(reason: string | undefined): boolean {
   return reason?.includes("INVALID_TARGET") ?? false;
+}
+
+export function isOutOfBounds(reason: string | undefined): boolean {
+  return reason?.includes("OUT_OF_BOUNDS") ?? false;
 }
 
 /** Bridge only when nothing is in flight — else idle workers detour around pending tips. */
@@ -86,6 +92,21 @@ function cellKey(x: number, y: number): string {
   return `${x},${y}`;
 }
 
+function noteCellOwned(ctx: WorkerContext, x: number, y: number): void {
+  const k = cellKey(x, y);
+  ctx.ownedSet.add(k);
+  if (ctx.self.name) {
+    ctx.occupied.set(k, ctx.self.name);
+    markTileOwned(ctx.map, ctx.self.name, x, y);
+  }
+}
+
+function noteCellNuked(ctx: WorkerContext, x: number, y: number): void {
+  const k = cellKey(x, y);
+  ctx.nukedSet.add(k);
+  ctx.occupied.set(k, "nuked");
+}
+
 function releasePending(ctx: WorkerContext, x: number, y: number): void {
   ctx.pendingClaims.delete(cellKey(x, y));
 }
@@ -120,6 +141,10 @@ export interface WorkerContext {
   recordSuccess: (x: number, y: number) => void;
   /** Shared mutable ownership set — keep in sync on every successful claim. */
   ownedSet: Set<string>;
+  /** Cell → owner name (or null). Built once; updated on claim / learn. */
+  occupied: Map<string, string | null>;
+  /** Permanently unclaimable cells — built once from the map snapshot. */
+  nukedSet: Set<string>;
   /** Cells reserved by in-flight workers (avoid duplicate place-tile). */
   pendingClaims: Set<string>;
 }
@@ -133,6 +158,8 @@ class UiClaimAllocator {
   private readonly toAck: Point[] = [];
   private readonly toRequeue: Point[] = [];
   private readonly ownedSet: Set<string>;
+  private readonly occupied: Map<string, string | null>;
+  private readonly nukedSet: Set<string>;
   private readonly pendingClaims: Set<string>;
 
   constructor(
@@ -141,16 +168,22 @@ class UiClaimAllocator {
     private readonly self: SelfContext,
     initialBatch: UiClaimQueueTile[],
     ownedSet: Set<string>,
+    occupied: Map<string, string | null>,
+    nukedSet: Set<string>,
     pendingClaims: Set<string>,
   ) {
     this.ownedSet = ownedSet;
+    this.occupied = occupied;
+    this.nukedSet = nukedSet;
     this.pendingClaims = pendingClaims;
     this.ingestSync(initialBatch);
   }
 
   noteOwned(x: number, y: number): void {
-    this.ownedSet.add(`${x},${y}`);
+    const k = cellKey(x, y);
+    this.ownedSet.add(k);
     if (this.self.name) {
+      this.occupied.set(k, this.self.name);
       markTileOwned(this.map, this.self.name, x, y);
     }
   }
@@ -234,7 +267,7 @@ class UiClaimAllocator {
     for (let i = this.nextIndex; i < this.work.length; i++) {
       const tile = this.work[i]!;
       const k = cellKey(tile.x, tile.y);
-      if (this.ownedSet.has(k)) {
+      if (this.ownedSet.has(k) || this.nukedSet.has(k)) {
         this.toAck.push({ x: tile.x, y: tile.y });
       } else {
         notStarted.push({ x: tile.x, y: tile.y });
@@ -260,7 +293,7 @@ class UiClaimAllocator {
     while (this.nextIndex < this.work.length) {
       const head = this.work[this.nextIndex]!;
       const headKey = cellKey(head.x, head.y);
-      if (!this.ownedSet.has(headKey)) {
+      if (!this.ownedSet.has(headKey) && !this.nukedSet.has(headKey)) {
         break;
       }
       this.toAck.push({ x: head.x, y: head.y });
@@ -278,6 +311,7 @@ class UiClaimAllocator {
       this.self.name,
       this.ownedSet,
       this.pendingClaims,
+      this.nukedSet,
     );
 
     if (adjacentIndex !== null) {
@@ -312,6 +346,7 @@ class UiClaimAllocator {
       remaining.map((t) => ({ x: t.x, y: t.y })),
       this.ownedSet,
       this.pendingClaims,
+      this.nukedSet,
     );
     if (!bridge) {
       return null;
@@ -365,8 +400,24 @@ async function runClaimTask(
   }
   // Map is source of truth — skip place-tile if we already own it locally.
   const mapTile = ctx.map.tiles.find((t) => t.x === current.x && t.y === current.y);
+  if (mapTile && isNukedOwnership(mapTile.ownership)) {
+    noteCellNuked(ctx, current.x, current.y);
+    if (current.fromUiQueue && allocator) {
+      allocator.ackTile(current.x, current.y);
+    }
+    releasePending(ctx, current.x, current.y);
+    return { placed: false, rateLimitWaitMs };
+  }
   if (ctx.self.name && ownerName(mapTile?.ownership ?? "") === ctx.self.name) {
-    ctx.ownedSet.add(k);
+    noteCellOwned(ctx, current.x, current.y);
+    if (current.fromUiQueue && allocator) {
+      allocator.ackTile(current.x, current.y);
+    }
+    releasePending(ctx, current.x, current.y);
+    return { placed: false, rateLimitWaitMs };
+  }
+
+  if (ctx.nukedSet.has(k)) {
     if (current.fromUiQueue && allocator) {
       allocator.ackTile(current.x, current.y);
     }
@@ -422,11 +473,10 @@ async function runClaimTask(
     }
 
     if (outcome.action === "success") {
-      ctx.ownedSet.add(`${current.x},${current.y}`);
       if (allocator) {
         allocator.noteOwned(current.x, current.y);
-      } else if (ctx.self.name) {
-        markTileOwned(ctx.map, ctx.self.name, current.x, current.y);
+      } else {
+        noteCellOwned(ctx, current.x, current.y);
       }
       ctx.recordSuccess(current.x, current.y);
       if (current.fromUiQueue && allocator) {
@@ -447,19 +497,25 @@ async function runClaimTask(
       return { placed: false, rateLimitWaitMs };
     }
 
-    await logJobEvent(ctx.db, "warn", "claim_rejected", result.rejected!.reason, {
+    const reason = result.rejected?.reason ?? "";
+    await logJobEvent(ctx.db, "warn", "claim_rejected", reason, {
       x: current.x,
       y: current.y,
       fromUiQueue: current.fromUiQueue,
     });
     // INVALID_TARGET on a cell we thought was free usually means we already own
     // it (fog). Learn that so we stop burning the rate budget on retries.
-    if (isInvalidTarget(result.rejected?.reason) && ctx.self.name) {
-      ctx.ownedSet.add(k);
-      markTileOwned(ctx.map, ctx.self.name, current.x, current.y);
+    if (isInvalidTarget(reason) && ctx.self.name) {
       if (allocator) {
         allocator.noteOwned(current.x, current.y);
+      } else {
+        noteCellOwned(ctx, current.x, current.y);
       }
+    }
+    // OOB: snap local fog inward so we stop re-picking this cell without
+    // leaving a pending reservation that stalls the pool (idleSpins ~3s).
+    if (isOutOfBounds(reason)) {
+      excludeOutOfBoundsCell(ctx.map, current.x, current.y);
     }
     if (current.fromUiQueue && allocator) {
       // INVALID_TARGET after an adjacent/bridge attempt will not become valid by
@@ -519,6 +575,8 @@ export async function runUiQueueWorkers(
     ctx.self,
     initialBatch,
     ctx.ownedSet,
+    ctx.occupied,
+    ctx.nukedSet,
     ctx.pendingClaims,
   );
 
@@ -553,6 +611,8 @@ class AutoClaimAllocator {
     private readonly self: SelfContext,
     private readonly recentClaims: Point[],
     private readonly ownedSet: Set<string>,
+    private readonly occupied: Map<string, string | null>,
+    private readonly nukedSet: Set<string>,
     private readonly pendingClaims: Set<string>,
     private readonly shouldStop: () => Promise<boolean>,
   ) {}
@@ -588,6 +648,7 @@ class AutoClaimAllocator {
           this.recentClaims,
           this.ownedSet,
           this.pendingClaims,
+          { occupied: this.occupied, nuked: this.nukedSet },
         );
         if (!target) {
           // Frontier may be fully reserved by in-flight claims. New adjacency
@@ -668,6 +729,8 @@ export async function runAutoClaimWorkers(
     ctx.self,
     recentClaims,
     ctx.ownedSet,
+    ctx.occupied,
+    ctx.nukedSet,
     ctx.pendingClaims,
     shouldStop,
   );

@@ -54,21 +54,66 @@ export function ownerName(
   return null;
 }
 
+/** Permanently unclaimable — ownership string "nuked" (not flags[].nuked). */
+export function isNukedOwnership(
+  ownership: string | Record<string, unknown> | undefined | null,
+): boolean {
+  if (ownership === "nuked") {
+    return true;
+  }
+  if (typeof ownership === "object" && ownership !== null) {
+    const owned = ownership["owned"];
+    if (owned === "nuked") {
+      return true;
+    }
+    const name = ownership["name"];
+    if (name === "nuked") {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function isNukedCell(nuked: Set<string>, x: number, y: number): boolean {
+  return nuked.has(`${x},${y}`);
+}
+
+export function isNukedTile(
+  map: MapResponse,
+  x: number,
+  y: number,
+  nuked?: Set<string>,
+): boolean {
+  if (nuked) {
+    return isNukedCell(nuked, x, y);
+  }
+  const tile = map.tiles.find((t) => t.x === x && t.y === y);
+  return tile !== undefined && isNukedOwnership(tile.ownership);
+}
+
 export function buildOwnershipMap(
   tiles: MapTile[],
   selfName: string | null,
-): { owned: Set<string>; occupied: Map<string, string | null> } {
+): {
+  owned: Set<string>;
+  occupied: Map<string, string | null>;
+  nuked: Set<string>;
+} {
   const owned = new Set<string>();
   const occupied = new Map<string, string | null>();
+  const nuked = new Set<string>();
   for (const tile of tiles) {
     const key = `${tile.x},${tile.y}`;
     const owner = ownerName(tile.ownership);
     occupied.set(key, owner);
+    if (isNukedOwnership(tile.ownership)) {
+      nuked.add(key);
+    }
     if (owner === selfName) {
       owned.add(key);
     }
   }
-  return { owned, occupied };
+  return { owned, occupied, nuked };
 }
 
 /**
@@ -78,8 +123,7 @@ export function buildOwnershipMap(
 export function blockedClaimCells(
   owned: Set<string>,
   pending?: Set<string>,
-  _occupied?: Map<string, string | null>,
-  _selfName?: string | null,
+  nuked?: Set<string>,
 ): Set<string> {
   const blocked = new Set(owned);
   if (pending) {
@@ -87,21 +131,26 @@ export function blockedClaimCells(
       blocked.add(key);
     }
   }
+  if (nuked) {
+    for (const key of nuked) {
+      blocked.add(key);
+    }
+  }
   return blocked;
 }
 
-/** Split tiles into ones we still need to claim vs ones we already own (local map). */
+/** Split tiles into claimable vs ack/drop (self-owned or permanently unclaimable nuked). */
 export function partitionBySelfOwnership<T extends { x: number; y: number }>(
   tiles: T[],
   map: MapResponse,
   selfName: string | null,
 ): { claimable: T[]; alreadyOwned: T[] } {
-  const { owned } = buildOwnershipMap(map.tiles, selfName);
+  const { owned, nuked } = buildOwnershipMap(map.tiles, selfName);
   const claimable: T[] = [];
   const alreadyOwned: T[] = [];
   for (const tile of tiles) {
     const key = `${tile.x},${tile.y}`;
-    if (owned.has(key)) {
+    if (owned.has(key) || nuked.has(key)) {
       alreadyOwned.push(tile);
     } else {
       // Empty and enemy tiles stay claimable (attacks are valid place-tiles).
@@ -121,9 +170,28 @@ export function markTileOwned(
   const existing = map.tiles.find((t) => t.x === x && t.y === y);
   if (existing) {
     existing.ownership = { owned: selfName };
-    return;
+  } else {
+    map.tiles.push({ x, y, ownership: { owned: selfName } });
   }
-  map.tiles.push({ x, y, ownership: { owned: selfName } });
+}
+
+/**
+ * API rejected this cell as outside fog. Tighten local bounds so we stop picking
+ * it (and do not leave a permanent pending reservation that stalls the pool).
+ */
+export function excludeOutOfBoundsCell(map: MapResponse, x: number, y: number): void {
+  if (x >= map.bounds.max_x) {
+    map.bounds.max_x = x - 1;
+  }
+  if (x <= map.bounds.min_x) {
+    map.bounds.min_x = x + 1;
+  }
+  if (y >= map.bounds.max_y) {
+    map.bounds.max_y = y - 1;
+  }
+  if (y <= map.bounds.min_y) {
+    map.bounds.min_y = y + 1;
+  }
 }
 
 export function isOrthogonallyAdjacentToSelf(
@@ -157,11 +225,13 @@ export function findNextAdjacentUiClaimIndex<T extends { x: number; y: number }>
   selfName: string | null,
   ownedSet?: Set<string>,
   pendingSet?: Set<string>,
+  nukedSet?: Set<string>,
 ): number | null {
+  const nuked = nukedSet ?? buildOwnershipMap(map.tiles, selfName).nuked;
   for (let i = fromIndex; i < work.length; i++) {
     const tile = work[i]!;
     const k = `${tile.x},${tile.y}`;
-    if (ownedSet?.has(k) || pendingSet?.has(k)) {
+    if (ownedSet?.has(k) || pendingSet?.has(k) || nuked.has(k)) {
       continue;
     }
     if (isOrthogonallyAdjacentToSelf(map, selfName, tile.x, tile.y, ownedSet)) {
@@ -178,17 +248,20 @@ export function pickBridgeStepToward(
   targets: Array<{ x: number; y: number }>,
   ownedSet?: Set<string>,
   pendingSet?: Set<string>,
+  nukedSet?: Set<string>,
 ): { x: number; y: number } | null {
   if (!selfName || targets.length === 0) {
     return null;
   }
+  const ownership = buildOwnershipMap(map.tiles, selfName);
   // Never rebuild ownership from map.tiles when the live set is provided —
   // that O(tiles) scan ran under the UI-queue lock and stalled in-flight leases.
-  const owned = ownedSet ?? buildOwnershipMap(map.tiles, selfName).owned;
+  const owned = ownedSet ?? ownership.owned;
   if (owned.size === 0) {
     return null;
   }
-  const blocked = blockedClaimCells(owned, pendingSet);
+  const nuked = nukedSet ?? ownership.nuked;
+  const blocked = blockedClaimCells(owned, pendingSet, nuked);
 
   // Prefer a direct step onto a queued target when already adjacent.
   for (const t of targets) {
@@ -381,14 +454,14 @@ export async function createPlaceTileLimiter(
   const placeRps = Math.max(1, limits?.place_tile?.max_per_sec ?? 20);
   // Stay under the API's per-second fixed window. The limiter also caps starts
   // per wall-clock second and waits for the next second instead of 429'ing.
-  const pacedRps = Math.max(1, placeRps - 2);
-  return new TokenBucketRateLimiter(pacedRps, 1, 8, 400);
+  const pacedRps = Math.max(1, placeRps - 1);
+  return new TokenBucketRateLimiter(pacedRps, 1, 16, 200);
 }
 
 /**
- * Parallel place-tile workers. Sized for ~19/s × ~0.9s RTT ≈ 17 in flight.
+ * Parallel place-tile workers. Sized for ~19/s × ~1.2–1.5s RTT headroom after O(1) pick.
  */
-export const PLACE_TILE_WORKER_COUNT = 18;
+export const PLACE_TILE_WORKER_COUNT = 28;
 
 /** @deprecated Use PLACE_TILE_WORKER_COUNT */
 export const PLACE_TILE_MAX_IN_FLIGHT = PLACE_TILE_WORKER_COUNT;
@@ -568,7 +641,7 @@ export async function shouldYieldAutoClaimToUi(env: Env): Promise<boolean> {
   return hasUiClaimQueueWork(env);
 }
 
-/** Cache window so 18 workers do not hammer the gateway on every acquire. */
+/** Cache window so parallel workers do not hammer the gateway on every acquire. */
 export const AUTO_CLAIM_UI_YIELD_CACHE_MS = 50;
 
 /**

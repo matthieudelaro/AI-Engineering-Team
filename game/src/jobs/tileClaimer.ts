@@ -65,6 +65,7 @@ function buildWorkerContext(
   map: NonNullable<Awaited<ReturnType<typeof loadMap>>>,
   self: SelfContext,
 ): WorkerContext {
+  const { owned, occupied, nuked } = buildOwnershipMap(map.tiles, self.name);
   return {
     env,
     db,
@@ -73,7 +74,9 @@ function buildWorkerContext(
     map,
     self,
     recordSuccess: recordRecentClaim,
-    ownedSet: buildOwnershipMap(map.tiles, self.name).owned,
+    ownedSet: owned,
+    occupied,
+    nukedSet: nuked,
     pendingClaims: new Set<string>(),
   };
 }

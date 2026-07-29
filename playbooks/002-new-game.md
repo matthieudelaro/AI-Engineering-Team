@@ -13,4 +13,4 @@ Switch the local stack onto a new game without wiping prior DB history.
 3. Confirm the script printed `[new-game] ready` and did not exit with an error.
 
 ## Done when
-Gateway serves `map?game_id=<newId>`, pollers wrote a fresh map row, and the claimer is running (`place-tile` or a WARN if still seeding/rate-limited).
+Gateway serves `map?game_id=<newId>`, pollers wrote a fresh map row, and jobs are running: tile claimer (`place-tile` or a WARN if still seeding/rate-limited) plus the owned-flag nuke loop (`nuke_loop_start` / `nuke_ok` in `policy_events`, capped at 100 pts / 3 min).

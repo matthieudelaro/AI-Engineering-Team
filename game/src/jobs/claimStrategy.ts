@@ -343,6 +343,7 @@ export function pickPriorityEnemyClaim(
   blocked: Set<string>,
   occupied: Map<string, string | null>,
   pendingSet?: Set<string>,
+  nukedSet?: Set<string>,
   enemyName: string = AUTO_PRIORITY_ENEMY,
 ): Point | null {
   if (!selfName) {
@@ -370,7 +371,7 @@ export function pickPriorityEnemyClaim(
     return claimable[Math.floor(Math.random() * claimable.length)]!;
   }
 
-  return pickBridgeStepToward(map, selfName, targets, owned, pendingSet);
+  return pickBridgeStepToward(map, selfName, targets, owned, pendingSet, nukedSet);
 }
 
 /** 5% random · 85% grow · 10% bridge (bridge skipped when territory is huge). */
@@ -380,17 +381,31 @@ export function pickClaimTarget(
   recentClaims: Point[],
   ownedSet?: Set<string>,
   pendingSet?: Set<string>,
+  precomputed?: { occupied: Map<string, string | null>; nuked: Set<string> },
 ): Point | null {
-  const { owned: ownedFromMap, occupied } = buildOwnershipMap(map.tiles, self.name);
-  // Union map + live set — an incomplete ownedSet must not hide map ownership
-  // (that caused us to re-place our own tiles → 100% INVALID_TARGET).
-  const owned = new Set(ownedFromMap);
-  if (ownedSet) {
-    for (const k of ownedSet) {
-      owned.add(k);
+  let owned: Set<string>;
+  let occupied: Map<string, string | null>;
+  let nuked: Set<string>;
+
+  if (precomputed) {
+    // ownedSet is kept fresh by the worker pool — no full map scan per pick.
+    owned = new Set(ownedSet ?? []);
+    occupied = precomputed.occupied;
+    nuked = precomputed.nuked;
+  } else {
+    const built = buildOwnershipMap(map.tiles, self.name);
+    // Union map + live set — an incomplete ownedSet must not hide map ownership
+    // (that caused us to re-place our own tiles → 100% INVALID_TARGET).
+    owned = new Set(built.owned);
+    if (ownedSet) {
+      for (const k of ownedSet) {
+        owned.add(k);
+      }
     }
+    occupied = built.occupied;
+    nuked = built.nuked;
   }
-  const blocked = blockedClaimCells(owned, pendingSet, occupied, self.name);
+  const blocked = blockedClaimCells(owned, pendingSet, nuked);
 
   // Auto priority (UI queue empty path): contested Spammer border tiles.
   const priority = pickPriorityEnemyClaim(
@@ -400,6 +415,7 @@ export function pickClaimTarget(
     blocked,
     occupied,
     pendingSet,
+    nuked,
   );
   if (priority !== null) {
     return priority;

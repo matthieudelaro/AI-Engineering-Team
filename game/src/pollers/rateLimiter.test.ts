@@ -41,7 +41,7 @@ describe("TokenBucketRateLimiter", () => {
 
   it("soft-resumes at reduced RPS after pauseFor ends", async () => {
     vi.useFakeTimers();
-    const limiter = new TokenBucketRateLimiter(20, 1, 8, 400);
+    const limiter = new TokenBucketRateLimiter(20, 1, 16, 200);
     limiter.pauseFor(100);
 
     let acquired = 0;
@@ -54,10 +54,10 @@ describe("TokenBucketRateLimiter", () => {
     })();
 
     await vi.advanceTimersByTimeAsync(100); // end pause
-    // 250ms of soft-resume at ~8/s → about 2 tokens (not ~5 at 20/s).
-    await vi.advanceTimersByTimeAsync(250);
-    expect(acquired).toBeGreaterThanOrEqual(1);
-    expect(acquired).toBeLessThanOrEqual(3);
+    // 200ms of soft-resume at ~16/s → about 3 tokens (not ~4 at 20/s).
+    await vi.advanceTimersByTimeAsync(200);
+    expect(acquired).toBeGreaterThanOrEqual(2);
+    expect(acquired).toBeLessThanOrEqual(5);
 
     stop = true;
     // Unblock the waiting acquire so the loop can exit.
@@ -65,9 +65,9 @@ describe("TokenBucketRateLimiter", () => {
     await loop;
   });
 
-  it("noteRemaining slows when remaining is low", async () => {
+  it("noteRemaining does not throttle when remaining is low but not zero", async () => {
     vi.useFakeTimers();
-    const limiter = new TokenBucketRateLimiter(20, 1, 8, 400);
+    const limiter = new TokenBucketRateLimiter(20, 1, 16, 200);
     await limiter.acquire();
     limiter.noteRemaining(2);
 
@@ -76,11 +76,48 @@ describe("TokenBucketRateLimiter", () => {
       acquired = true;
     });
 
-    // Soft-resume RPS = 2 → ~500ms per token.
-    await vi.advanceTimersByTimeAsync(400);
+    // No soft-resume — next acquire should proceed at full paced RPS (~50ms).
+    await vi.advanceTimersByTimeAsync(60);
+    await pending;
+    expect(acquired).toBe(true);
+  });
+
+  it("noteRemaining pauses until next wall second when remaining is zero after nearly spending cap", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.100Z"));
+    const limiter = new TokenBucketRateLimiter(20, 20, 16, 200);
+    for (let i = 0; i < 18; i++) {
+      expect(limiter.tryAcquire()).toBe(true);
+    }
+    limiter.noteRemaining(0);
+
+    let acquired = false;
+    const pending = limiter.acquire().then(() => {
+      acquired = true;
+    });
+
+    // Pause until next wall second (~905ms from 100ms into the second).
+    await vi.advanceTimersByTimeAsync(800);
     expect(acquired).toBe(false);
 
-    await vi.advanceTimersByTimeAsync(150);
+    await vi.advanceTimersByTimeAsync(200);
+    await pending;
+    expect(acquired).toBe(true);
+  });
+
+  it("noteRemaining with zero at start of second does not pause (stale header)", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.100Z"));
+    const limiter = new TokenBucketRateLimiter(20, 20, 16, 200);
+    limiter.noteRemaining(0);
+
+    let acquired = false;
+    const pending = limiter.acquire().then(() => {
+      acquired = true;
+    });
+
+    // Stale remaining=0 must not trigger wall-second pause (~905ms).
+    await vi.advanceTimersByTimeAsync(60);
     await pending;
     expect(acquired).toBe(true);
   });

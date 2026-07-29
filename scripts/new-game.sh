@@ -86,11 +86,12 @@ sql() {
 }
 
 stop_stack() {
-  log "stopping prior gateway / pollers / jobs / ui"
+  log "stopping prior gateway / pollers / jobs / nuke-flags / ui"
   pkill -f "tsx src/cli.ts gateway" 2>/dev/null || true
   pkill -f "tsx src/cli.ts pollers" 2>/dev/null || true
   pkill -f "tsx src/cli.ts jobs" 2>/dev/null || true
   pkill -f "tsx src/cli.ts start" 2>/dev/null || true
+  pkill -f "nuke-owned-flags-loop" 2>/dev/null || true
   pkill -f "vite --config ui/vite.config.ts" 2>/dev/null || true
   sleep 1
 }
@@ -100,13 +101,27 @@ start_bg() {
   shift
   local logfile="$LOG_DIR/${name}.log"
   : >"$logfile"
+  # Double-fork into a new session so agent/Cursor shell teardown (SIGTERM to
+  # the process group) cannot kill the stack. plain nohup is not enough on macOS.
   (
     cd "$GAME_DIR"
-    # setsid detaches from the script's process group so Cursor/agent shells
-    # ending do not take the stack down with them.
-    setsid "$@" >>"$logfile" 2>&1 < /dev/null &
-    echo $! >"$LOG_DIR/${name}.pid"
-  )
+    python3 - "$@" <<'PY' >>"$logfile" 2>&1
+import os, sys
+args = sys.argv[1:]
+if not args:
+    raise SystemExit("start_bg: missing command")
+if os.fork() > 0:
+    raise SystemExit(0)
+os.setsid()
+if os.fork() > 0:
+    raise SystemExit(0)
+devnull = os.open("/dev/null", os.O_RDONLY)
+os.dup2(devnull, 0)
+os.close(devnull)
+os.execvp(args[0], args)
+PY
+  ) &
+  sleep 0.3
   log "started $name (log $logfile)"
 }
 
@@ -180,12 +195,13 @@ else
   log "WARN: psql not available — skipped game_states freshness check"
 fi
 
+# Jobs = tile claimer + owned-flag nuke loop (see game/src/jobs/nukeOwnedFlags.ts).
 start_bg jobs npm run jobs
 wait_pgrep "tsx src/cli.ts jobs" jobs
 
-start_bg ui npm run ui
-wait_pgrep "vite --config ui/vite.config.ts" ui
-wait_http "http://localhost:5173/" "ui" 40
+# Start vite directly (not via npm) so the server survives parent shell exit.
+start_bg ui ./node_modules/.bin/vite --config ui/vite.config.ts
+wait_http "http://127.0.0.1:5173/" "ui" 60
 
 # --- 4. Verify gates -------------------------------------------------------------
 log "verifying"

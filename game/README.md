@@ -145,7 +145,7 @@ docker tag postgres:15.5 postgres:1.15   # if not already tagged
 npm run db:up
 npm run db:migrate
 
-# 4. Full stack (gateway + pollers + all policies in ab-test.json)
+# 4. Full stack (gateway + pollers + jobs [tile claimer + owned-flag nuker] + policies in ab-test.json)
 npm start
 ```
 
@@ -157,6 +157,8 @@ Interactive 2D map — click or click-drag to claim tiles (skips tiles you alrea
 npm run gateway    # terminal 1 — proxy with X-Player-Id auth
 npm run ui         # terminal 2 — http://localhost:5173
 ```
+
+**Light mode** (`VITE_UI_LIGHT=1` or `?light=1`) disables the live map SSE stream and heavy diagnostic panels (rate stats, claim queue, API console); the map still refreshes on the 5s poll interval.
 
 Brush modifiers (hold while painting):
 
@@ -178,8 +180,19 @@ Use separate terminals when debugging:
 ```bash
 npm run gateway    # API proxy → http://127.0.0.1:3100
 npm run pollers    # background state fetchers
+npm run jobs       # tile claimer + owned-flag nuke loop
+npm run nuke-flags # owned-flag nuke loop only (already included in jobs/start)
 npm run status     # DB summary (call counts, recent states, policy runs)
 ```
+
+### Owned-flag nuke job
+
+Started automatically by `npm run jobs` and `npm start` (`src/jobs/nukeOwnedFlags.ts`).
+
+- **Targets:** active (`nuked: false`) flags whose tile is owned by us — join GetFlags cache with map ownership from `game_states` (no extra map/flags API GETs for selection).
+- **Action:** `POST /api/v1/launch-nuke` via the gateway only.
+- **Spend cap:** `NUKE_RATE_LIMIT` points (default **100**) per rolling `NUKE_RATE_WINDOW_MS` (default **3 minutes**). Waits when the window is full; survives gateway errors / game-ended / cooldowns.
+- **Standalone:** `npm run nuke-flags` if you need the loop without the tile claimer (do not run both standalone and `jobs` at once).
 
 ### Policy commands
 
@@ -232,6 +245,8 @@ npm test
 |---|---|---|
 | **Gateway** | one process | Reverse-proxies to `GAME_API_URL`, injects auth, writes `api_calls` |
 | **Pollers** | one process | Polls each entry in `config/api.endpoints.json`, writes `game_states` |
+| **Jobs** | one process (`npm run jobs` / inside `npm start`) | Tile claimer + owned-flag nuke loop |
+| **Owned-flag nuker** | inside jobs | Nukes flags on our tiles; ≤100 pts / 3 min (env-tunable) |
 | **Policy supervisor** | inside `npm start` | Spawns one child process per policy in `config/ab-test.json` |
 | **Policy worker** | child process | Loads `policies/<key>.ts`, runs `tick()` loop, writes `policy_events` |
 

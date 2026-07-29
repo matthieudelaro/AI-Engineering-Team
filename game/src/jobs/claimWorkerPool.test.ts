@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   canStartUiBridgeStep,
   isInvalidTarget,
+  isOutOfBounds,
   resolvePlaceTileOutcome,
 } from "./claimWorkerPool.js";
 import {
@@ -26,6 +27,14 @@ describe("isInvalidTarget", () => {
     expect(isInvalidTarget("REJECTION_REASON_INVALID_TARGET")).toBe(true);
     expect(isInvalidTarget("other")).toBe(false);
     expect(isInvalidTarget(undefined)).toBe(false);
+  });
+});
+
+describe("isOutOfBounds", () => {
+  it("matches OUT_OF_BOUNDS rejections", () => {
+    expect(isOutOfBounds("REJECTION_REASON_OUT_OF_BOUNDS")).toBe(true);
+    expect(isOutOfBounds("other")).toBe(false);
+    expect(isOutOfBounds(undefined)).toBe(false);
   });
 });
 

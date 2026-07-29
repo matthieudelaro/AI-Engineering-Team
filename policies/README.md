@@ -4,7 +4,7 @@ Rolling audit of strategies tried against the game API. Each policy has a markdo
 write-up (`NNN-name.md`) and an executable module (`NNN-name.ts`).
 
 > **OUTDATED (2026-07-14):** Standalone policy workers (`001-init`, `002-autoplay`)
-> are **retired**. Claiming is owned by `npm run jobs` (tileClaimer + flagSpawner)
+> are **retired**. Claiming is owned by `npm run jobs` (tileClaimer + owned-flag nuker)
 > plus the UI claim queue. Do not run `npm run policy` / `npm run play` for live
 > play — they compete for the shared `place-tile` rate limit. `ab-test.json`
 > policies list is empty so `npm start` will not spawn them.

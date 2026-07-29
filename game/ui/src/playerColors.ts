@@ -100,45 +100,128 @@ export function hashColor(name: string): string {
   return hslToHex(hue, 0.65, 0.52);
 }
 
-/**
- * Build map colors from leaderboard entries. Uses each player's API color when
- * unique; when several players share the same API color, keeps the largest
- * territory on the API color and shifts hue for the others.
- */
-export function buildPlayerColors(entries: LeaderboardEntry[]): PlayerColors {
-  const byName = new Map<string, string>();
-  const groups = new Map<string, LeaderboardEntry[]>();
+function normalizeColorKey(hex: string): string {
+  return hex.trim().toLowerCase();
+}
 
-  for (const entry of entries) {
-    if (entry.is_self) {
-      continue;
+function colorIsTaken(hex: string, used: ReadonlySet<string>): boolean {
+  return used.has(normalizeColorKey(hex));
+}
+
+function markUsed(hex: string, used: Set<string>): void {
+  used.add(normalizeColorKey(hex));
+}
+
+/** Pick API color if free; otherwise hue-shift, then hash as last resort. */
+function assignFreeColor(
+  preferred: string,
+  displayName: string,
+  used: Set<string>,
+  collisionIndex: number,
+  collisionCount: number,
+): string {
+  const tryCandidate = (candidate: string): string | null => {
+    if (colorIsTaken(candidate, used) || normalizeColorKey(candidate) === normalizeColorKey(SELF_MAP_COLOR)) {
+      return null;
     }
+    return candidate;
+  };
+
+  if (collisionIndex === 0) {
+    const direct = tryCandidate(preferred);
+    if (direct) {
+      return direct;
+    }
+  } else {
+    const spread = 360 / Math.max(collisionCount, 1);
+    const shifted = tryCandidate(shiftHue(preferred, spread * collisionIndex));
+    if (shifted) {
+      return shifted;
+    }
+  }
+
+  for (let step = 1; step <= 11; step++) {
+    const candidate = tryCandidate(shiftHue(preferred, 30 * step));
+    if (candidate) {
+      return candidate;
+    }
+  }
+
+  const hashed = hashColor(displayName);
+  const hashedFree = tryCandidate(hashed);
+  if (hashedFree) {
+    return hashedFree;
+  }
+
+  // Extremely crowded palette — keep shifting the hash until unique.
+  for (let step = 1; step <= 35; step++) {
+    const candidate = tryCandidate(shiftHue(hashed, 10 * step));
+    if (candidate) {
+      return candidate;
+    }
+  }
+  return hashed;
+}
+
+/**
+ * Build map colors from leaderboard entries.
+ *
+ * - Self is always {@link SELF_MAP_COLOR}.
+ * - Other players keep sticky colors from a previous build when provided.
+ * - New players prefer their API color when free; API-color collisions among
+ *   newcomers are broken by sorted `display_name` (never score/tile_count).
+ */
+export function buildPlayerColors(
+  entries: LeaderboardEntry[],
+  previous: PlayerColors | null = null,
+): PlayerColors {
+  const byName = new Map<string, string>();
+  const used = new Set<string>();
+  markUsed(SELF_MAP_COLOR, used);
+
+  const self = entries.find((entry) => entry.is_self);
+  if (self) {
+    byName.set(self.display_name, SELF_MAP_COLOR);
+  }
+
+  const others = entries.filter((entry) => !entry.is_self);
+
+  // Sticky: keep prior identity→color so rank/API palette churn cannot swap hues.
+  if (previous) {
+    for (const entry of others) {
+      const sticky = previous.byName.get(entry.display_name);
+      if (!sticky || sticky === SELF_MAP_COLOR) {
+        continue;
+      }
+      byName.set(entry.display_name, sticky);
+      markUsed(sticky, used);
+    }
+  }
+
+  const newcomers = others.filter((entry) => !byName.has(entry.display_name));
+  const groups = new Map<string, LeaderboardEntry[]>();
+  for (const entry of newcomers) {
     const group = groups.get(entry.color) ?? [];
     group.push(entry);
     groups.set(entry.color, group);
   }
 
   for (const [apiColor, group] of groups) {
-    if (group.length === 1) {
-      byName.set(group[0]!.display_name, apiColor);
-      continue;
-    }
-
-    const sorted = [...group].sort((a, b) => b.tile_count - a.tile_count);
+    const sorted = [...group].sort((a, b) =>
+      a.display_name.localeCompare(b.display_name),
+    );
     for (let i = 0; i < sorted.length; i++) {
       const entry = sorted[i]!;
-      if (i === 0) {
-        byName.set(entry.display_name, apiColor);
-      } else {
-        const spread = 360 / sorted.length;
-        byName.set(entry.display_name, shiftHue(apiColor, spread * i));
-      }
+      const color = assignFreeColor(
+        apiColor,
+        entry.display_name,
+        used,
+        i,
+        sorted.length,
+      );
+      byName.set(entry.display_name, color);
+      markUsed(color, used);
     }
-  }
-
-  const self = entries.find((entry) => entry.is_self);
-  if (self) {
-    byName.set(self.display_name, SELF_MAP_COLOR);
   }
 
   return {

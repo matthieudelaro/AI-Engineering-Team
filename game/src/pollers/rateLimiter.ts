@@ -135,8 +135,9 @@ export class TokenBucketRateLimiter {
   }
 
   /**
-   * Proactive throttle from X-RateLimit-Remaining. Slows starts before we hit 0
-   * instead of slamming into RATE_LIMITED.
+   * Proactive throttle from X-RateLimit-Remaining. Only pauses when the API
+   * reports zero remaining and this wall second has nearly spent its budget —
+   * stale remaining=0 from a prior window (RTT) must not block a fresh second.
    */
   noteRemaining(remaining: number | undefined): void {
     if (typeof remaining !== "number" || !Number.isFinite(remaining)) {
@@ -144,19 +145,12 @@ export class TokenBucketRateLimiter {
     }
     if (remaining <= 0) {
       this.tokens = 0;
-      // Pause until the next wall-clock second (API fixed windows align to it).
-      const msToNextSec = 1000 - (Date.now() % 1000) + 5;
-      this.pauseFor(msToNextSec);
-      return;
-    }
-    if (remaining <= 3) {
-      this.tokens = Math.min(this.tokens, 0);
       const now = Date.now();
-      this.softResumeRps = Math.min(
-        this.softResumeRps ?? this.maxRps,
-        Math.max(1, remaining),
-      );
-      this.softResumeUntilMs = Math.max(this.softResumeUntilMs, now + 500);
+      const cap = this.syncWindow(now);
+      if (this.windowStarts >= Math.max(1, cap - 2)) {
+        const msToNextSec = 1000 - (now % 1000) + 5;
+        this.pauseFor(msToNextSec);
+      }
     }
   }
 }

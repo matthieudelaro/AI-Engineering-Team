@@ -164,6 +164,41 @@ describe("claimStrategy", () => {
     expect(target!.x).toBeLessThanOrEqual(2);
   });
 
+  it("does not pick a nuked adjacent cell when a valid neighbor exists", () => {
+    vi.spyOn(Math, "random").mockReturnValue(0.1);
+
+    const map = {
+      bounds: { min_x: 0, min_y: 0, max_x: 2, max_y: 1 },
+      tiles: [
+        { x: 0, y: 0, ownership: { owned: "Me" } },
+        { x: 1, y: 0, ownership: "nuked" },
+        { x: 0, y: 1, ownership: "neutral" },
+      ],
+    };
+
+    expansionLassoPlanner().plan = [];
+
+    const target = pickClaimTarget(map, { name: "Me", tileCount: 1 }, [{ x: 0, y: 0 }]);
+    expect(target).toEqual({ x: 0, y: 1 });
+  });
+
+  it("returns null when only adjacent frontier cell is nuked", () => {
+    vi.spyOn(Math, "random").mockReturnValue(0.1);
+
+    const map = {
+      bounds: { min_x: 0, min_y: 0, max_x: 1, max_y: 0 },
+      tiles: [
+        { x: 0, y: 0, ownership: { owned: "Me" } },
+        { x: 1, y: 0, ownership: "nuked" },
+      ],
+    };
+
+    expansionLassoPlanner().plan = [];
+
+    const target = pickClaimTarget(map, { name: "Me", tileCount: 1 }, [{ x: 0, y: 0 }]);
+    expect(target).toBeNull();
+  });
+
   it("does not pick cells already owned or reserved by another worker", () => {
     vi.spyOn(Math, "random").mockReturnValue(0.1);
 
@@ -187,5 +222,31 @@ describe("claimStrategy", () => {
     );
 
     expect(target).toBeNull();
+  });
+
+  it("uses precomputed occupied without scanning map.tiles", () => {
+    vi.spyOn(Math, "random").mockReturnValue(0.1);
+
+    const map = {
+      bounds: { min_x: 0, min_y: 0, max_x: 2, max_y: 0 },
+      tiles: [] as Array<{ x: number; y: number; ownership: unknown }>,
+    };
+    const owned = new Set(["0,0"]);
+    const occupied = new Map<string, string | null>([
+      ["0,0", "Me"],
+      ["1,0", null],
+    ]);
+    const nuked = new Set<string>();
+
+    const target = pickClaimTarget(
+      map,
+      { name: "Me", tileCount: 1 },
+      [{ x: 0, y: 0 }],
+      owned,
+      undefined,
+      { occupied, nuked },
+    );
+
+    expect(target).toEqual({ x: 1, y: 0 });
   });
 });
