@@ -30,6 +30,8 @@ gate and a security gate, all written down as plain Markdown in git.
   write denied).
 - `playbooks/`: saved procedures run on a trigger word or a schedule (see
   `playbooks/README.md`).
+- `projects/`: side projects (e.g. AgentWars) kept out of every-session startup
+  context — load via `projects/README.md` only when that project is the task.
 
 ## How to start
 1. Fork or clone this repo.
@@ -45,8 +47,9 @@ gate and a security gate, all written down as plain Markdown in git.
 - **Written memory and context** (`MEMORY.md`, `context/` via `INDEX.md`) — loaded
   on demand; identity and stack in `PROFILE.md`, working preferences in
   `PRINCIPLES.md`.
-- **Layered memory** — a shared team `MEMORY.md` plus a per-role
-  `roles/<role>/MEMORY.md`; the more specific layer wins.
+- **Layered memory** — a shared team `MEMORY.md`, per-role `roles/<role>/MEMORY.md`,
+  and optional `projects/<Name>/MEMORY.md` (load only when that project is the
+  task); the more specific layer wins.
 - **A front-door router (the Architect)** — every build request enters through the
   Architect, who triages, breaks it down, and delegates. Roles live in
   `roles/<role>/ROLE.md`.

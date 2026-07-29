@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Switch to a new game session and bring the stack up in a safe order.
+# Switch to a new AgentWars game session and bring the stack up in a safe order.
 # Does NOT delete prior game_states / api_calls (kept for learning).
 #
-# Usage: ./scripts/new-game.sh <gameId> <playerId>
+# Usage (from projects/AgentWars/): ./scripts/new-game.sh <gameId> <playerId>
 set -euo pipefail
 
 if [[ $# -ne 2 ]]; then
@@ -17,7 +17,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 GAME_DIR="$ROOT/game"
 ENV_FILE="$ROOT/.env"
 GAME_JSON="$GAME_DIR/config/game.json"
-LOG_DIR="${TMPDIR:-/tmp}/ai-eng-game-stack"
+LOG_DIR="${TMPDIR:-/tmp}/agentwars-stack"
 mkdir -p "$LOG_DIR"
 
 if [[ ! -f "$ENV_FILE" ]]; then

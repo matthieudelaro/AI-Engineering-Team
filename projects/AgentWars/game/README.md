@@ -48,14 +48,17 @@ The gateway proxies to the **upstream base**; game paths are appended (e.g. `/st
 ## Repository layout
 
 ```
-AI-Engineering-Team/
-├── .env.example              # copy to .env at repo root
-├── policies/                 # policy docs + executable modules (repo root)
-│   ├── README.md             # rolling recap table — keep updated
-│   ├── 001-init.md           # narrative audit per policy
-│   └── 001-init.ts           # executable policy
-└── game/                     # runnable infrastructure (this package)
-    ├── docker-compose.yml    # postgres:1.15 container
+projects/AgentWars/             # this project (not team startup context)
+├── MEMORY.md                   # project learnings
+├── .env.example                # copy to .env here
+├── playbooks/002-new-game.md
+├── scripts/new-game.sh
+├── policies/                   # policy docs + executable modules
+│   ├── README.md               # rolling recap table — keep updated
+│   ├── 001-init.md
+│   └── 001-init.ts
+└── game/                       # runnable infrastructure (this package)
+    ├── docker-compose.yml      # postgres:1.15 container
     ├── config/
     │   ├── game.json           # gameId + playerId (UI reads this)
     │   ├── api.endpoints.json  # upstream URL, auth, state endpoints to poll
@@ -101,7 +104,7 @@ docker images | grep postgres
 
 ## Environment variables
 
-Copy and edit from repo root:
+Copy and edit from `projects/AgentWars/`:
 
 ```bash
 cp .env.example .env
@@ -125,14 +128,14 @@ cp .env.example .env
 | `POLICY_TICK_INTERVAL_MS` | `1000` | Delay between policy ticks (continuous mode) |
 | `DRY_RUN` | `false` | Skip mutating actions when `true` |
 
-`.env` is loaded from the **repo root** (not `game/`), by `game/src/config.ts`.
+`.env` is loaded from **`projects/AgentWars/`** (not `game/`), by `game/src/config.ts`.
 
 ---
 
 ## Quickstart
 
 ```bash
-# 1. Credentials (repo root)
+# 1. Credentials (projects/AgentWars/)
 cp .env.example .env
 # edit GAME_API_URL, GAME_API_TOKEN
 
@@ -372,7 +375,7 @@ GROUP BY policy_id;
 
 ## Policies
 
-Policies live in [`../policies/`](../policies/) at the **repo root** (not inside `game/`).
+Policies live in [`../policies/`](../policies/) under **AgentWars** (not inside `game/`).
 
 ### File naming
 

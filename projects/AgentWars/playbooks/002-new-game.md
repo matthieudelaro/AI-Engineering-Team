@@ -1,11 +1,12 @@
 # 002 - New game
 
 **Cadence:** On demand (when a new game ID / player ID arrives).
+**Project:** AgentWars (`projects/AgentWars/`).
 
 Switch the local stack onto a new game without wiping prior DB history.
 
 ## Steps
-1. Run from the repo root:
+1. Run from `projects/AgentWars/`:
    ```bash
    ./scripts/new-game.sh <gameId> <playerId>
    ```

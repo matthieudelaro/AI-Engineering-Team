@@ -3,6 +3,6 @@ dist/
 .env
 *.log
 .DS_Store
-game/.data/
+projects/AgentWars/game/.data/
 scripts/*
 tmp/*

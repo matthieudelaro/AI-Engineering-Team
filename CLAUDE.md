@@ -76,6 +76,8 @@ Memory is layered. Load the shared layer always, the role layer when you act as
 that role:
 - **Shared** — `MEMORY.md` (root): what the whole team has learned.
 - **Role** — `roles/<role>/MEMORY.md`: what a specific role has learned.
+- **Project** — `projects/<Name>/MEMORY.md`: load only when working on that
+  project (see `projects/README.md`). Do not put project notes in root memory.
 Keep each current in place (replace what is outdated, do not just append). Put
-shared learnings in the root, role-specific learnings in the role's file. On
-conflict the more specific layer wins.
+shared learnings in the root, role-specific learnings in the role's file, project
+learnings in the project. On conflict the more specific layer wins.

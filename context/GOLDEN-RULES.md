@@ -3,7 +3,7 @@
 The constitution. Non-negotiable rules that bind every role and subagent here.
 They override everything else. On any conflict, stop and ask.
 
-0. When you spawn a subagent: USE ONLY MODELS COMPOSER 2.5 FAST or GROK 4.5 High Fast
+0. LLM at your disposal: when running in Cursor: When you spawn a subagent: USE ONLY MODELS COMPOSER 2.5 FAST or GROK 4.5 High Fast. Run QA Agents with another model than the one you are using.
 
 1. **Read-only by default.** Every external tool (GitHub, files beyond this repo,
    any connector) is read-only unless a write is explicitly granted.

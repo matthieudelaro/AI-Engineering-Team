@@ -11,3 +11,4 @@ the files a task needs, not everything every time.
 | `standards/BACKEND-STANDARDS.md` | backend build work (APIs, data, server-side) |
 | `standards/FRONTEND-STANDARDS.md` | frontend build work (UI, client-side) |
 | `standards/GIT-WORKFLOW.md` | committing, branching, and opening a pull request |
+| `projects/README.md` | which side projects exist; then load that project's `MEMORY.md` / README only |

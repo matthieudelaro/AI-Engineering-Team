@@ -26,7 +26,8 @@ pnpm start                   # gateway + pollers (+ policies only if listed in a
 ## A/B testing
 
 Edit [`game/config/ab-test.json`](../game/config/ab-test.json) to assign policies to
-non-overlapping map zones. Currently `"policies": []` (none active).
+non-overlapping map zones. Currently `"policies": []` (none active). Project root
+is `projects/AgentWars/`.
 
 ## Retired / outdated policies
 
