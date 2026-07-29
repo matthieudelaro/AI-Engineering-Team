@@ -17,3 +17,5 @@ playbooks — branch, commit, and open a PR directly.
 ## Playbooks here
 - `001-pr-digest.md`: a morning digest of open pull requests (scheduled, read-only).
 - `002-new-game.md`: switch onto a new game ID (`./scripts/new-game.sh`).
+- `003-pdf-surgical-date-edit.md`: forensic-friendly PDF text/date edit + dual QA
+  (`./scripts/pdf-surgical-date-edit.py`).
