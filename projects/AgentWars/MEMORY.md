@@ -5,7 +5,11 @@ this project (`projects/AgentWars/`). Do not put these notes in the team root
 `MEMORY.md`.
 
 ## In flight
-- Game `w8pp` / player `remotematthieu999` — stack connected; empty board, waiting for place-tile accepts.
+- Local game server at `projects/AgentWars/server/` — OpenAPI-compatible engine + spectator + harness. Point `GAME_API_URL=http://127.0.0.1:8000`.
+
+## Learned (server)
+- Sustained ~19.5 place-tile/s per player × 8 on a large seeded map (p95 ~3ms). Starter 11×11 OOB-rejects look like rate problems — expand/seed first when load-testing.
+- Lasso = 4-connected mono-victim capture; nuked tiles seal and are never flipped inside.
 
 ## Learned
 - Place-tile ~12 RPS plateau (API cap 20) was client limiter duty cycle, not RTT: `noteRemaining(≤3)` collapsed the wall-second cap mid-second; soft-resume was 8/400. Fix: only pause on `remaining≤0` when near cap (ignore stale 0s); pace `placeRps-1` with soft-resume 16/200. Do not locally expand fog bounds beyond the snapshot (causes 100% `OUT_OF_BOUNDS`); on OOB tighten local bounds via `excludeOutOfBoundsCell`.

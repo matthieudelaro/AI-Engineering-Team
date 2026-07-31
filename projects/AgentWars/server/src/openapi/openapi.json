@@ -1,0 +1,44 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "AgentWars Game API",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Health check"
+      }
+    },
+    "/api/v1/place-tile": {
+      "post": {
+        "summary": "Place a tile"
+      }
+    },
+    "/api/v1/map": {
+      "get": {
+        "summary": "Get fogged map"
+      }
+    },
+    "/api/v1/leaderboard": {
+      "get": {
+        "summary": "Get leaderboard"
+      }
+    },
+    "/api/v1/flags": {
+      "get": {
+        "summary": "Get flags"
+      }
+    },
+    "/api/v1/method-limits": {
+      "get": {
+        "summary": "Get method rate limits"
+      }
+    },
+    "/api/v1/launch-nuke": {
+      "post": {
+        "summary": "Launch a nuke"
+      }
+    }
+  }
+}

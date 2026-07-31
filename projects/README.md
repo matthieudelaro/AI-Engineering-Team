@@ -5,7 +5,7 @@ startup context. Load a project only when you are working on it.
 
 | Project | Path | Load when... |
 |---|---|---|
-| AgentWars | [`AgentWars/`](AgentWars/) | Playing or maintaining the AgentWars game stack |
+| AgentWars | [`AgentWars/`](AgentWars/) | Playing or maintaining the AgentWars client stack, or the local game server under [`AgentWars/server/`](AgentWars/server/) |
 
 Each project keeps its own `MEMORY.md`, playbooks, and scripts. Do not copy
 project learnings into the team root `MEMORY.md`.

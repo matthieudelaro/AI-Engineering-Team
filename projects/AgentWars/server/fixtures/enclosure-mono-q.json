@@ -1,0 +1,48 @@
+{
+  "tick": 0,
+  "players": [
+    {
+      "externalId": "p1",
+      "displayName": "Player One",
+      "color": "#e6194b"
+    },
+    {
+      "externalId": "p2",
+      "displayName": "Player Two",
+      "color": "#3cb44b"
+    }
+  ],
+  "ownership": [
+    { "x": -2, "y": -2, "ownerExternalId": "p1", "nuked": false },
+    { "x": -1, "y": -2, "ownerExternalId": "p1", "nuked": false },
+    { "x": 0, "y": -2, "ownerExternalId": "p1", "nuked": false },
+    { "x": 1, "y": -2, "ownerExternalId": "p1", "nuked": false },
+    { "x": 2, "y": -2, "ownerExternalId": "p1", "nuked": false },
+    { "x": -2, "y": -1, "ownerExternalId": "p1", "nuked": false },
+    { "x": 2, "y": -1, "ownerExternalId": "p1", "nuked": false },
+    { "x": -2, "y": 0, "ownerExternalId": "p1", "nuked": false },
+    { "x": 2, "y": 0, "ownerExternalId": "p1", "nuked": false },
+    { "x": -2, "y": 1, "ownerExternalId": "p1", "nuked": false },
+    { "x": 2, "y": 1, "ownerExternalId": "p1", "nuked": false },
+    { "x": -2, "y": 2, "ownerExternalId": "p1", "nuked": false },
+    { "x": -1, "y": 2, "ownerExternalId": "p1", "nuked": false },
+    { "x": 0, "y": 2, "ownerExternalId": "p1", "nuked": false },
+    { "x": 1, "y": 2, "ownerExternalId": "p1", "nuked": false },
+    { "x": 2, "y": 2, "ownerExternalId": "p1", "nuked": false },
+    { "x": -1, "y": -1, "ownerExternalId": "p2", "nuked": false },
+    { "x": 0, "y": -1, "ownerExternalId": "p2", "nuked": false },
+    { "x": -1, "y": 0, "ownerExternalId": "p2", "nuked": false },
+    { "x": 0, "y": 0, "ownerExternalId": "p2", "nuked": false },
+    { "x": 0, "y": 1, "ownerExternalId": "p2", "nuked": true }
+  ],
+  "flags": [
+    {
+      "flag_id": "flag-center",
+      "x": 0,
+      "y": 0,
+      "pot": 25,
+      "nuked": false,
+      "ownerExternalId": "p2"
+    }
+  ]
+}
