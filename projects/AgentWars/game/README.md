@@ -184,9 +184,30 @@ Use separate terminals when debugging:
 npm run gateway    # API proxy → http://127.0.0.1:3100
 npm run pollers    # background state fetchers
 npm run jobs       # tile claimer + owned-flag nuke loop
+npm run agent cartographer  # standalone cartographer (~20 RPS; do not run with jobs)
 npm run nuke-flags # owned-flag nuke loop only (already included in jobs/start)
 npm run status     # DB summary (call counts, recent states, policy runs)
 ```
+
+### Cartographer agent (003)
+
+Standalone map-aware agent — **not** started by `npm start` or `npm run jobs`.
+
+```bash
+npm run gateway    # terminal 1
+npm run pollers    # terminal 2
+npm run agent cartographer
+
+# 10s QA sanity run
+AGENT_DURATION_MS=10000 npm run agent cartographer
+
+# Dry-run planning tick
+npm run policy test 003-cartographer
+```
+
+See [`../policies/003-cartographer.md`](../policies/003-cartographer.md). Do not run
+alongside `npm run jobs` (shared place-tile budget). Optional mock upstream:
+`tsx scripts/mock-game-api.ts` when the real API is unreachable.
 
 ### Owned-flag nuke job
 
@@ -576,6 +597,7 @@ npm run policy test 001-init
 | `start` | `tsx src/cli.ts start` | DB + gateway + pollers + all policies |
 | `status` | `tsx src/cli.ts status` | Print DB summary |
 | `policy` | `tsx src/cli.ts policy <cmd> <key>` | `test`, `run`, or `restart` |
+| `agent` | `tsx src/cli.ts agent cartographer` | Standalone cartographer agent |
 | `test` | `vitest run` | Unit tests |
 | `build` | `tsc` | Typecheck + emit to `dist/` |
 

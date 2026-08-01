@@ -8,6 +8,7 @@ They override everything else. On any conflict, stop and ask.
 1. **Read-only by default.** Every external tool (GitHub, files beyond this repo,
    any connector) is read-only unless a write is explicitly granted.
    Deny-by-default: anything not granted is off-limits.
+   Ex: DO NOT DELETE DOCKER VOLUMES WITHOUT APPROVAL (those are files beyond this repo)
 2. **No external action without approval.** Nothing is pushed, merged, deployed,
    or published outside this repo without your clear say-so.
 3. **Deletion is never automatic.** Destructive actions are yours alone, never

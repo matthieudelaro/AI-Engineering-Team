@@ -15,6 +15,7 @@
     "start": "tsx src/cli.ts start",
     "status": "tsx src/cli.ts status",
     "policy": "tsx src/cli.ts policy",
+    "agent": "tsx src/cli.ts agent",
     "play": "tsx src/policies/worker-entry.ts 002-autoplay",
     "ui": "vite --config ui/vite.config.ts",
     "new-game": "bash ../scripts/new-game.sh",

@@ -68,25 +68,81 @@ export function resolvePlayer(
   if (game.players.length >= MAX_PLAYERS) {
     return { error: "game_full" };
   }
-  const playerId = game.registerPlayer(externalId, externalId, randomColor());
+  const displayName =
+    externalId === (process.env.PLAYER_ID ?? "") &&
+    process.env.SELF_DISPLAY_NAME?.trim()
+      ? process.env.SELF_DISPLAY_NAME.trim()
+      : externalId;
+  const playerId = game.registerPlayer(
+    externalId,
+    displayName,
+    nextDistinctColor(game),
+  );
   if (playerId === null) {
     return { error: "game_full" };
   }
   return { playerId };
 }
 
-function randomColor(): string {
-  const palette = [
-    "#e6194b",
-    "#3cb44b",
-    "#4363d8",
-    "#f58231",
-    "#911eb4",
-    "#46f0f0",
-    "#f032e6",
-    "#bcf60c",
-  ];
-  return palette[Math.floor(Math.random() * palette.length)] ?? "#888888";
+const PLAYER_PALETTE = [
+  "#e6194b",
+  "#3cb44b",
+  "#4363d8",
+  "#f58231",
+  "#911eb4",
+  "#42d4f4",
+  "#f032e6",
+  "#bfef45",
+] as const;
+
+/** Prefer an unused palette swatch so leaderboard colors stay distinct. */
+function nextDistinctColor(game: GameSession): string {
+  const used = new Set(
+    game.players.map((p) => p.color.trim().toLowerCase()),
+  );
+  for (const swatch of PLAYER_PALETTE) {
+    if (!used.has(swatch.toLowerCase())) {
+      return swatch;
+    }
+  }
+  // All 8 taken (shouldn't happen at MAX_PLAYERS=8) — fall back to hex hue spread.
+  const hue = (game.players.length * 47) % 360;
+  return hueToHex(hue);
+}
+
+function hueToHex(hue: number): string {
+  const s = 0.72;
+  const l = 0.5;
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs(((hue / 60) % 2) - 1));
+  const m = l - c / 2;
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  if (hue < 60) {
+    r = c;
+    g = x;
+  } else if (hue < 120) {
+    r = x;
+    g = c;
+  } else if (hue < 180) {
+    g = c;
+    b = x;
+  } else if (hue < 240) {
+    g = x;
+    b = c;
+  } else if (hue < 300) {
+    r = x;
+    b = c;
+  } else {
+    r = c;
+    b = x;
+  }
+  const toByte = (v: number) =>
+    Math.round((v + m) * 255)
+      .toString(16)
+      .padStart(2, "0");
+  return `#${toByte(r)}${toByte(g)}${toByte(b)}`;
 }
 
 export function bootstrapFromEnv(): GameSession {
