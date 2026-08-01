@@ -211,13 +211,20 @@ async function runAgentCommand(args: string[]): Promise<void> {
     `cartographer agent running${durationMs ? ` (${durationMs}ms)` : ""} — Ctrl+C to stop`,
   );
 
-  const shutdown = async () => {
+  const shutdown = async (code = 0) => {
     handle.stop();
     await pool.end();
-    process.exit(0);
+    process.exit(code);
   };
-  process.on("SIGINT", () => void shutdown());
-  process.on("SIGTERM", () => void shutdown());
+  process.on("SIGINT", () => void shutdown(0));
+  process.on("SIGTERM", () => void shutdown(0));
+
+  if (durationMs && durationMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, durationMs + 500));
+    console.log(`cartographer agent duration elapsed (${durationMs}ms)`);
+    await shutdown(0);
+    return;
+  }
 
   await new Promise(() => {});
 }
