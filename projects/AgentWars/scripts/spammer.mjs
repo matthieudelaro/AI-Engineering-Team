@@ -14,7 +14,9 @@ const BASE = process.env.GAME_API_URL ?? "http://127.0.0.1:8000";
 const GAME = process.argv[2] ?? process.env.GAME_ID ?? "qa1";
 const PLAYER = process.env.PLAYER_ID ?? "Spammer";
 const RPS = Number(process.env.RPS ?? 20);
+/** 0 or negative = run until SIGINT/SIGTERM (default 3 minutes). */
 const MAX_MS = Number(process.env.MAX_MS ?? 180_000);
+const unlimited = !Number.isFinite(MAX_MS) || MAX_MS <= 0;
 
 let bounds = { min_x: -5, min_y: -5, max_x: 5, max_y: 5 };
 let accepted = 0;
@@ -23,6 +25,22 @@ let limited = 0;
 let running = true;
 
 async function refreshBounds() {
+  // Prefer omniscient spectator bounds — fogged /map collapses when Spammer
+  // owns few tiles and traps random claims in a tiny pocket.
+  try {
+    const r = await fetch(
+      `${BASE}/api/v1/spectator/map?game_id=${encodeURIComponent(GAME)}`,
+    );
+    if (r.ok) {
+      const j = await r.json();
+      if (j?.bounds) {
+        bounds = j.bounds;
+        return;
+      }
+    }
+  } catch {
+    // fall through
+  }
   try {
     const r = await fetch(`${BASE}/api/v1/map?game_id=${encodeURIComponent(GAME)}`, {
       headers: { "X-Player-Id": PLAYER },
@@ -83,7 +101,7 @@ const statsTimer = setInterval(() => {
 
 const intervalMs = 1000 / RPS;
 async function loop() {
-  while (running && Date.now() - started < MAX_MS) {
+  while (running && (unlimited || Date.now() - started < MAX_MS)) {
     const t0 = Date.now();
     // fire without awaiting previous fully — keep pipeline short (1 in flight avg)
     void claimOnce();

@@ -65,10 +65,10 @@ OPENAPI_URL=http://127.0.0.1:8000/openapi.json
 | `GET /api/v1/leaderboard?game_id=` | Leaderboard with `is_self` |
 | `GET /api/v1/flags?game_id=` | Active flags |
 | `GET /api/v1/method-limits?game_id=` | Advertised rate limits |
-| `POST /api/v1/launch-nuke` | Launch nuke on owned tile |
+| `POST /api/v1/launch-nuke` | Nuke any in-bounds cell (must own ≥1 tile; radius/cost decay with distance) |
 | `GET /api/v1/players/:name/stats` | Player stats |
 
-Rate limits (per player, per second): `place_tile` 20, `get_map` 30, `get_flags` 20, `get_leaderboard` 20.
+Rate limits (per player, per second): `place_tile` 20, `get_map` 30, `get_flags` 20, `get_leaderboard` 20, `get_stats` 20, `launch_nuke` 1 (+ 30s cooldown).
 
 Unknown `X-Player-Id` values are auto-registered when fewer than 8 players are in the game.
 

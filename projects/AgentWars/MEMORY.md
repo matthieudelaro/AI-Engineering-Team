@@ -10,6 +10,8 @@ this project (`projects/AgentWars/`). Do not put these notes in the team root
 ## Learned (server)
 - Sustained ~19.5 place-tile/s per player × 8 on a large seeded map (p95 ~3ms). Starter 11×11 OOB-rejects look like rate problems — expand/seed first when load-testing.
 - Lasso = 4-connected mono-victim capture; nuked tiles seal and are never flipped inside.
+- **V2 flags:** spawn only on map expand into the new ring (0 flags at size 11). Target count `round(size² / 480)`; spawn `max(0, target − current)` on empty non-nuked ring cells. Flag id `"x,y"`. Pot +1 every 5s while live (lazy via `frozenPot` / `createdAtMs`; inject `now` in tests). Ownership follows tile owner on claim/lasso. Nuke freezes pot and sets `lockedOwnerId` permanently.
+- **V2 nukes:** any in-bounds target; player must own ≥1 tile. Radius `clamp(floor(5 − distance×0.15), 1, 4)` where distance is Chebyshev to nearest owned tile (0 when target is on owned land). Cost = newly nuked cells × 1; clears ownership on new hits. 30s per-player cooldown (`COOLDOWN` → 409 + `retry_after`). HTTP `launch_nuke` max 1/s. Leaderboard: `score = territory + flags + nuke_cost` (`nuke_cost` negative spend).
 
 ## Learned
 - Place-tile ~12 RPS plateau (API cap 20) was client limiter duty cycle, not RTT: `noteRemaining(≤3)` collapsed the wall-second cap mid-second; soft-resume was 8/400. Fix: only pause on `remaining≤0` when near cap (ignore stale 0s); pace `placeRps-1` with soft-resume 16/200. Do not locally expand fog bounds beyond the snapshot (causes 100% `OUT_OF_BOUNDS`); on OOB tighten local bounds via `excludeOutOfBoundsCell`.

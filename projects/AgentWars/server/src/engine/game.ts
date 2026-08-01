@@ -1,26 +1,31 @@
 import { randomUUID } from "node:crypto";
 import { tryClaim } from "./claim.js";
-import { FOG_PADDING, MAX_PLAYERS, type RejectionReason } from "./constants.js";
+import {
+  FOG_PADDING,
+  MAX_PLAYERS,
+  NUKE_COOLDOWN_MS,
+  type RejectionReason,
+} from "./constants.js";
 import { applyCaptures } from "./enclosure.js";
 import { maybeExpand } from "./expand.js";
+import {
+  computePot,
+  materializePot,
+  materializePots,
+  spawnFlagsInRing,
+  type FlagState,
+} from "./flags.js";
 import { getVisibleForPlayer, type FogTile } from "./fog.js";
 import { Grid } from "./grid.js";
 import { launchNuke } from "./nuke.js";
+
+export type FlagRecord = FlagState;
 
 export interface PlayerRecord {
   id: number;
   externalId: string;
   displayName: string;
   color: string;
-}
-
-export interface FlagRecord {
-  id: string;
-  x: number;
-  y: number;
-  pot: number;
-  nuked: boolean;
-  ownerId: number | null;
 }
 
 export interface GameEvent {
@@ -53,6 +58,13 @@ export interface LeaderboardEntry {
   tile_count: number;
   flags_held: number;
   score: number;
+  score_streams?: {
+    territory: number;
+    flags: number;
+    nuke_cost: number;
+    scan_cost: number;
+    intel_cost: number;
+  };
 }
 
 export interface LeaderboardView {
@@ -66,6 +78,8 @@ export interface FlagView {
   y: number;
   pot: number;
   nuked: boolean;
+  /** Display name of live owner, or locked owner when nuked; null if unclaimed. */
+  owner: string | null;
 }
 
 export interface FlagsView {
@@ -102,7 +116,15 @@ export interface PlaceTileResult {
 }
 
 export interface ActionAcceptedResponse {
-  accepted: { action_id: string };
+  accepted: {
+    action_id: string;
+    accepted_at?: string;
+    effect?: {
+      launch_id: string;
+      effective_radius_tiles: number;
+      cost_charged: number;
+    };
+  };
 }
 
 export interface ActionRejectedResponse {
@@ -116,8 +138,18 @@ function nextEventId(): string {
   return String(eventCounter);
 }
 
-export function buildAcceptedResponse(actionId?: string): ActionAcceptedResponse {
-  return { accepted: { action_id: actionId ?? randomUUID() } };
+export function buildAcceptedResponse(
+  actionId?: string,
+  effect?: ActionAcceptedResponse["accepted"]["effect"],
+): ActionAcceptedResponse {
+  const accepted: ActionAcceptedResponse["accepted"] = {
+    action_id: actionId ?? randomUUID(),
+  };
+  if (effect) {
+    accepted.accepted_at = new Date().toISOString().replace(/\.\d{3}Z$/, "");
+    accepted.effect = effect;
+  }
+  return { accepted };
 }
 
 export function buildRejectedResponse(
@@ -140,10 +172,21 @@ export class GameSession {
   tick = 0;
   readonly events: GameEvent[] = [];
   private readonly listeners = new Set<(event: GameEvent) => void>();
+  private readonly nukeSpendByPlayer = new Map<number, number>();
+  private readonly lastNukeAtMsByPlayer = new Map<number, number>();
+  private readonly now: () => number;
+  private readonly random: () => number;
 
-  private constructor(id: string, grid: Grid) {
+  private constructor(
+    id: string,
+    grid: Grid,
+    now: () => number,
+    random: () => number,
+  ) {
     this.id = id;
     this.grid = grid;
+    this.now = now;
+    this.random = random;
   }
 
   /** Subscribe to live events (SSE). Returns unsubscribe. */
@@ -154,13 +197,17 @@ export class GameSession {
     };
   }
 
-  static create(id: string): GameSession {
-    return new GameSession(id, Grid.createInitial(11));
+  static create(id: string, now: () => number = Date.now): GameSession {
+    return new GameSession(id, Grid.createInitial(11), now, Math.random);
   }
 
-  static createSeeded(id: string): GameSession {
+  static createSeeded(
+    id: string,
+    now: () => number = Date.now,
+    random: () => number = Math.random,
+  ): GameSession {
     eventCounter = 0;
-    return GameSession.create(id);
+    return new GameSession(id, Grid.createInitial(11), now, random);
   }
 
   registerPlayer(
@@ -221,14 +268,25 @@ export class GameSession {
       }
     }
 
-    this.syncFlagsWithGrid();
+    this.syncFlagsWithGrid(this.now());
 
-    if (maybeExpand(this.grid)) {
+    const expansion = maybeExpand(this.grid);
+    if (expansion.expanded && expansion.oldBounds) {
+      const spawned = spawnFlagsInRing(
+        this.grid,
+        expansion.oldBounds,
+        this.flags,
+        this.grid.width,
+        this.now(),
+        this.random,
+      );
+      this.flags.push(...spawned);
       events.push(
         this.makeEvent("map_expanded", {
           width: this.grid.width,
           height: this.grid.height,
           bounds: this.grid.bounds(),
+          flags_spawned: spawned.length,
         }),
       );
     }
@@ -245,40 +303,77 @@ export class GameSession {
   ): {
     accepted: boolean;
     cost: number;
+    radius: number;
+    launchId?: string;
     rejection_reason?: RejectionReason;
+    retry_after?: number;
     events: GameEvent[];
   } {
+    const nowMs = this.now();
     if (!this.grid.inBounds(x, y)) {
       return {
         accepted: false,
         cost: 0,
+        radius: 0,
         rejection_reason: "OUT_OF_BOUNDS",
         events: [],
       };
     }
-    if (this.grid.getOwner(x, y) !== playerId) {
+    if (this.grid.playerTileCount(playerId) === 0) {
       return {
         accepted: false,
         cost: 0,
+        radius: 0,
         rejection_reason: "INVALID_TARGET",
         events: [],
       };
     }
 
-    const result = launchNuke(this.grid, x, y);
-    this.markFlagsNukedAt(result.hit);
-    this.syncFlagsWithGrid();
+    const lastNukeAt = this.lastNukeAtMsByPlayer.get(playerId);
+    if (lastNukeAt !== undefined) {
+      const elapsed = nowMs - lastNukeAt;
+      if (elapsed < NUKE_COOLDOWN_MS) {
+        const retryAfter = Math.ceil((NUKE_COOLDOWN_MS - elapsed) / 1000);
+        return {
+          accepted: false,
+          cost: 0,
+          radius: 0,
+          rejection_reason: "COOLDOWN",
+          retry_after: retryAfter,
+          events: [],
+        };
+      }
+    }
+
+    materializePots(this.flags, nowMs);
+    const launchId = randomUUID();
+    const result = launchNuke(this.grid, playerId, x, y, launchId);
+    this.freezeFlagsNukedAt(result.hit, nowMs);
+    this.syncFlagsWithGrid(nowMs);
+
+    const priorSpend = this.nukeSpendByPlayer.get(playerId) ?? 0;
+    this.nukeSpendByPlayer.set(playerId, priorSpend + result.cost);
+    this.lastNukeAtMsByPlayer.set(playerId, nowMs);
+
     this.tick += 1;
     const event = this.makeEvent("nuke_launched", {
       x,
       y,
       player_id: this.displayNameFor(playerId),
       cost: result.cost,
+      radius: result.radius,
+      launch_id: launchId,
       cells: result.hit,
     });
     this.events.push(event);
     this.emit([event]);
-    return { accepted: true, cost: result.cost, events: [event] };
+    return {
+      accepted: true,
+      cost: result.cost,
+      radius: result.radius,
+      launchId,
+      events: [event],
+    };
   }
 
   getMapForPlayer(playerId: number): ApiMapView {
@@ -303,31 +398,25 @@ export class GameSession {
   }
 
   getLeaderboard(selfExternalId?: string): LeaderboardView {
+    const nowMs = this.now();
+    materializePots(this.flags, nowMs);
     const entries = this.players
-      .map((p) => {
-        const tileCount = this.grid.playerTileCount(p.id);
-        const flagsHeld = this.flagsHeldBy(p.id);
-        return {
-          display_name: p.displayName,
-          is_self: selfExternalId !== undefined && p.externalId === selfExternalId,
-          color: p.color,
-          tile_count: tileCount,
-          flags_held: flagsHeld,
-          score: tileCount + flagsHeld * 10,
-        };
-      })
+      .map((p) => this.buildLeaderboardEntry(p, selfExternalId, nowMs))
       .sort((a, b) => b.score - a.score || b.tile_count - a.tile_count);
     return { entries, tick: this.tick };
   }
 
   getFlags(): FlagsView {
+    const nowMs = this.now();
+    materializePots(this.flags, nowMs);
     return {
       flags: this.flags.map((f) => ({
         flag_id: f.id,
         x: f.x,
         y: f.y,
-        pot: f.pot,
+        pot: computePot(f, nowMs),
         nuked: f.nuked,
+        owner: this.flagOwnerDisplayName(f),
       })),
     };
   }
@@ -337,14 +426,16 @@ export class GameSession {
     if (!player) {
       return null;
     }
-    const tileCount = this.grid.playerTileCount(player.id);
-    const flagsHeld = this.flagsHeldBy(player.id);
+    const nowMs = this.now();
+    materializePots(this.flags, nowMs);
+    const entry = this.buildLeaderboardEntry(player, undefined, nowMs);
     return {
-      display_name: player.displayName,
-      color: player.color,
-      tile_count: tileCount,
-      flags_held: flagsHeld,
-      score: tileCount + flagsHeld * 10,
+      display_name: entry.display_name,
+      color: entry.color,
+      tile_count: entry.tile_count,
+      flags_held: entry.flags_held,
+      score: entry.score,
+      score_streams: entry.score_streams,
       tick: this.tick,
     };
   }
@@ -361,6 +452,8 @@ export class GameSession {
   }
 
   toSnapshot(): GameSnapshot {
+    const nowMs = this.now();
+    materializePots(this.flags, nowMs);
     const ownership: SnapshotOwnershipCell[] = [];
     this.grid.forEachCell((x, y, owner, nuked) => {
       ownership.push({
@@ -383,7 +476,7 @@ export class GameSession {
         flag_id: f.id,
         x: f.x,
         y: f.y,
-        pot: f.pot,
+        pot: computePot(f, nowMs),
         nuked: f.nuked,
         ownerExternalId:
           f.ownerId === null
@@ -397,6 +490,8 @@ export class GameSession {
     this.players.length = 0;
     this.flags.length = 0;
     this.events.length = 0;
+    this.nukeSpendByPlayer.clear();
+    this.lastNukeAtMsByPlayer.clear();
     this.tick = snapshot.tick ?? 0;
 
     for (const player of snapshot.players) {
@@ -437,17 +532,68 @@ export class GameSession {
         id: flag.flag_id,
         x: flag.x,
         y: flag.y,
-        pot: flag.pot,
+        frozenPot: flag.pot,
+        createdAtMs: this.now(),
         nuked: flag.nuked,
         ownerId,
+        lockedOwnerId: flag.nuked ? ownerId : null,
       });
     }
 
-    this.syncFlagsWithGrid();
+    this.syncFlagsWithGrid(this.now());
+  }
+
+  private buildLeaderboardEntry(
+    player: PlayerRecord,
+    selfExternalId: string | undefined,
+    nowMs: number,
+  ): LeaderboardEntry {
+    const territory = this.grid.playerTileCount(player.id);
+    const flagsScore = this.flagPointsFor(player.id, nowMs);
+    const nukeCost = -(this.nukeSpendByPlayer.get(player.id) ?? 0);
+    const score = territory + flagsScore + nukeCost;
+    return {
+      display_name: player.displayName,
+      is_self: selfExternalId !== undefined && player.externalId === selfExternalId,
+      color: player.color,
+      tile_count: territory,
+      flags_held: this.flagsHeldBy(player.id),
+      score,
+      score_streams: {
+        territory,
+        flags: flagsScore,
+        nuke_cost: nukeCost,
+        scan_cost: 0,
+        intel_cost: 0,
+      },
+    };
+  }
+
+  private flagPointsFor(playerId: number, nowMs: number): number {
+    let total = 0;
+    for (const flag of this.flags) {
+      const pot = computePot(flag, nowMs);
+      if (!flag.nuked && flag.ownerId === playerId) {
+        total += pot;
+        continue;
+      }
+      if (flag.nuked && flag.lockedOwnerId === playerId) {
+        total += pot;
+      }
+    }
+    return total;
   }
 
   private flagsHeldBy(playerId: number): number {
     return this.flags.filter((f) => !f.nuked && f.ownerId === playerId).length;
+  }
+
+  private flagOwnerDisplayName(flag: FlagRecord): string | null {
+    const ownerId = flag.nuked ? flag.lockedOwnerId : flag.ownerId;
+    if (ownerId === null) {
+      return null;
+    }
+    return this.displayNameFor(ownerId);
   }
 
   private toApiOwnership(owner: number, nuked: boolean): ApiOwnership {
@@ -473,22 +619,33 @@ export class GameSession {
     return this.flags.some((f) => f.x === x && f.y === y && !f.nuked);
   }
 
-  private markFlagsNukedAt(cells: Array<{ x: number; y: number }>): void {
+  private freezeFlagsNukedAt(
+    cells: Array<{ x: number; y: number }>,
+    nowMs: number,
+  ): void {
     for (const cell of cells) {
       for (const flag of this.flags) {
-        if (flag.x === cell.x && flag.y === cell.y) {
-          flag.nuked = true;
+        if (flag.x !== cell.x || flag.y !== cell.y || flag.nuked) {
+          continue;
         }
+        materializePot(flag, nowMs);
+        flag.nuked = true;
+        flag.lockedOwnerId = flag.ownerId;
       }
     }
   }
 
-  private syncFlagsWithGrid(): void {
+  private syncFlagsWithGrid(nowMs: number): void {
+    materializePots(this.flags, nowMs);
     for (const flag of this.flags) {
       if (this.grid.inBounds(flag.x, flag.y) && this.grid.isNuked(flag.x, flag.y)) {
-        flag.nuked = true;
+        if (!flag.nuked) {
+          materializePot(flag, nowMs);
+          flag.nuked = true;
+          flag.lockedOwnerId = flag.ownerId;
+        }
       }
-      if (this.grid.inBounds(flag.x, flag.y)) {
+      if (!flag.nuked && this.grid.inBounds(flag.x, flag.y)) {
         const owner = this.grid.getOwner(flag.x, flag.y);
         flag.ownerId = owner === 0 ? null : owner;
       }

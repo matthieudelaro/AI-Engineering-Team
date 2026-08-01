@@ -3,6 +3,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import {
+  NUKE_COST_MODEL,
+  NUKE_EXPLOSION_MODEL,
+  NUKE_COOLDOWN_MS,
+} from "../engine/constants.js";
 import { buildAcceptedResponse } from "../engine/game.js";
 import { getGame, getOrCreateGame, resolvePlayer } from "../store.js";
 import {
@@ -226,6 +231,13 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       get_flags: { max_per_sec: RATE_LIMITS.get_flags },
       get_leaderboard: { max_per_sec: RATE_LIMITS.get_leaderboard },
       get_stats: { max_per_sec: RATE_LIMITS.get_stats },
+      launch_nuke: {
+        cooldown: NUKE_COOLDOWN_MS / 1000,
+        max_active_per_player: 1,
+        max_per_sec: RATE_LIMITS.launch_nuke,
+        explosion_model: { ...NUKE_EXPLOSION_MODEL },
+        cost_model: { ...NUKE_COST_MODEL },
+      },
       fog_of_war_padding_tiles: 3,
     });
   });
@@ -284,10 +296,20 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       parsed.data.target_y,
     );
     if (!result.accepted) {
-      sendRejection(reply, result.rejection_reason ?? "INVALID_TARGET");
+      sendRejection(
+        reply,
+        result.rejection_reason ?? "INVALID_TARGET",
+        result.retry_after ?? 0,
+      );
       return;
     }
-    reply.send(buildAcceptedResponse());
+    reply.send(
+      buildAcceptedResponse(undefined, {
+        launch_id: result.launchId!,
+        effective_radius_tiles: result.radius,
+        cost_charged: result.cost,
+      }),
+    );
   });
 
   app.get("/api/v1/players/:name/stats", async (request, reply) => {

@@ -37,6 +37,7 @@ export function rejectionStatus(reason: RejectionReason): number {
     case "OUT_OF_BOUNDS":
       return 400;
     case "INVALID_TARGET":
+    case "COOLDOWN":
       return 409;
     default:
       return 400;
@@ -46,8 +47,11 @@ export function rejectionStatus(reason: RejectionReason): number {
 export function sendRejection(
   reply: FastifyReply,
   reason: RejectionReason,
+  retryAfter = 0,
 ): void {
-  reply.status(rejectionStatus(reason)).send(buildRejectedResponse(reason, 0));
+  reply
+    .status(rejectionStatus(reason))
+    .send(buildRejectedResponse(reason, retryAfter));
 }
 
 export function notImplemented(reply: FastifyReply, details: string): void {

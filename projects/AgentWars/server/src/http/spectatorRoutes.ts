@@ -71,4 +71,19 @@ export async function registerSpectatorRoutes(app: FastifyInstance): Promise<voi
     }
     reply.send(game.getLeaderboard());
   });
+
+  app.get("/api/v1/spectator/flags", async (request, reply) => {
+    const parsed = gameIdQuery.safeParse(request.query);
+    if (!parsed.success) {
+      reply.status(400).send({ error: "invalid_request", details: parsed.error.message });
+      return;
+    }
+
+    const game = getGame(parsed.data.game_id);
+    if (!game) {
+      reply.status(404).send({ error: "game_not_found" });
+      return;
+    }
+    reply.send(game.getFlags());
+  });
 }

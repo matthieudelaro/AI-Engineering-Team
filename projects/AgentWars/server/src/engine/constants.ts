@@ -19,6 +19,24 @@ export const ORTHOGONAL_DELTAS = [
   { dx: 0, dy: -1 },
 ] as const;
 
-export type RejectionReason = "INVALID_TARGET" | "OUT_OF_BOUNDS";
+export const FLAG_DENSITY_DIVISOR = 480;
+export const FLAG_POT_INTERVAL_MS = 5_000;
+export const NUKE_COOLDOWN_MS = 30_000;
+
+export const NUKE_EXPLOSION_MODEL = {
+  base_radius_tiles: 5,
+  distance_decay: 0.15,
+  max_radius_tiles: 4,
+  min_radius_tiles: 1,
+} as const;
+
+export const NUKE_COST_MODEL = {
+  cost_per_tile: 1,
+} as const;
+
+export type RejectionReason =
+  | "INVALID_TARGET"
+  | "OUT_OF_BOUNDS"
+  | "COOLDOWN";
 
 export type PlayerId = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;

@@ -11,7 +11,7 @@ export const RATE_LIMITS: Record<RateLimitEndpoint, number> = {
   get_map: 30,
   get_flags: 20,
   get_leaderboard: 20,
-  launch_nuke: 20,
+  launch_nuke: 1,
   get_stats: 20,
 };
 

@@ -114,6 +114,50 @@ describe("HTTP API", () => {
     expect(body.entries.every((e) => e.is_self === false)).toBe(true);
   });
 
+  it("GET /api/v1/spectator/flags returns flags with owner", async () => {
+    await app.inject({
+      method: "POST",
+      url: "/_harness/games",
+      headers: { "x-harness-token": "test-harness" },
+      payload: { id: "spec-flags", reset: true },
+    });
+    await app.inject({
+      method: "POST",
+      url: "/_harness/games/spec-flags/seed",
+      headers: { "x-harness-token": "test-harness" },
+      payload: {
+        players: [{ externalId: "alice", displayName: "Alice", color: "#f00" }],
+        ownership: [{ x: 0, y: 0, ownerExternalId: "alice", nuked: false }],
+        flags: [
+          {
+            flag_id: "0,0",
+            x: 0,
+            y: 0,
+            pot: 12,
+            nuked: false,
+            ownerExternalId: "alice",
+          },
+        ],
+      },
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/spectator/flags?game_id=spec-flags",
+    });
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      flags: Array<{ flag_id: string; pot: number; owner: string | null; nuked: boolean }>;
+    };
+    expect(body.flags).toHaveLength(1);
+    expect(body.flags[0]).toMatchObject({
+      flag_id: "0,0",
+      pot: 12,
+      owner: "Alice",
+      nuked: false,
+    });
+  });
+
   it("GET /api/v1/spectator/map returns 404 for unknown game", async () => {
     const response = await app.inject({
       method: "GET",
@@ -144,8 +188,55 @@ describe("HTTP API", () => {
       get_flags: { max_per_sec: 20 },
       get_leaderboard: { max_per_sec: 20 },
       get_stats: { max_per_sec: 20 },
+      launch_nuke: {
+        cooldown: 30,
+        max_active_per_player: 1,
+        max_per_sec: 1,
+        explosion_model: {
+          base_radius_tiles: 5,
+          distance_decay: 0.15,
+          max_radius_tiles: 4,
+          min_radius_tiles: 1,
+        },
+        cost_model: { cost_per_tile: 1 },
+      },
       fog_of_war_padding_tiles: 3,
     });
+  });
+
+  it("POST /api/v1/launch-nuke returns effect payload", async () => {
+    for (let i = 0; i < 20; i += 1) {
+      await app.inject({
+        method: "POST",
+        url: "/api/v1/place-tile",
+        headers: { "x-player-id": "nuke-alice" },
+        payload: { game_id: "nuke-effect", x: i % 5, y: Math.floor(i / 5) },
+      });
+    }
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/launch-nuke",
+      headers: { "x-player-id": "nuke-alice" },
+      payload: { game_id: "nuke-effect", target_x: 0, target_y: 0 },
+    });
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      accepted: {
+        action_id: string;
+        accepted_at: string;
+        effect: {
+          launch_id: string;
+          effective_radius_tiles: number;
+          cost_charged: number;
+        };
+      };
+    };
+    expect(body.accepted.action_id).toBeTruthy();
+    expect(body.accepted.accepted_at).toBeTruthy();
+    expect(body.accepted.effect.launch_id).toBeTruthy();
+    expect(body.accepted.effect.effective_radius_tiles).toBe(4);
+    expect(body.accepted.effect.cost_charged).toBeGreaterThan(0);
   });
 });
 
@@ -193,27 +284,23 @@ describe("rate limiting", () => {
     expect(limited.headers["x-ratelimit-limit"]).toBe("20");
   });
 
-  it("returns 429 when launch-nuke exceeds limit", async () => {
-    for (let i = 0; i < 20; i += 1) {
-      const x = i % 5;
-      const y = Math.floor(i / 5);
+  it("returns 429 when launch-nuke exceeds per-second limit", async () => {
+    for (let i = 0; i < 5; i += 1) {
       await app.inject({
         method: "POST",
         url: "/api/v1/place-tile",
         headers: { "x-player-id": "nuke-bot" },
-        payload: { game_id: "nuke-rl", x, y },
+        payload: { game_id: "nuke-rl", x: i, y: 0 },
       });
     }
 
-    for (let i = 0; i < 20; i += 1) {
-      const ok = await app.inject({
-        method: "POST",
-        url: "/api/v1/launch-nuke",
-        headers: { "x-player-id": "nuke-bot" },
-        payload: { game_id: "nuke-rl", target_x: 0, target_y: 0 },
-      });
-      expect(ok.statusCode).toBe(200);
-    }
+    const ok = await app.inject({
+      method: "POST",
+      url: "/api/v1/launch-nuke",
+      headers: { "x-player-id": "nuke-bot" },
+      payload: { game_id: "nuke-rl", target_x: 0, target_y: 0 },
+    });
+    expect(ok.statusCode).toBe(200);
 
     const limited = await app.inject({
       method: "POST",

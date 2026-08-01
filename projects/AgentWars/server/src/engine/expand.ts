@@ -1,5 +1,10 @@
 import { EXPAND_THRESHOLD, SIZE_LADDER } from "./constants.js";
-import type { Grid } from "./grid.js";
+import type { Grid, GridBounds } from "./grid.js";
+
+export interface ExpandResult {
+  expanded: boolean;
+  oldBounds?: GridBounds;
+}
 
 export function shouldExpand(grid: Grid): boolean {
   const total = grid.width * grid.height;
@@ -22,14 +27,15 @@ export function nextLadderSize(currentSize: number): number | null {
   return SIZE_LADDER[idx + 1]!;
 }
 
-export function maybeExpand(grid: Grid): boolean {
+export function maybeExpand(grid: Grid): ExpandResult {
   if (!shouldExpand(grid)) {
-    return false;
+    return { expanded: false };
   }
   const next = nextLadderSize(grid.width);
   if (next === null || next === grid.width) {
-    return false;
+    return { expanded: false };
   }
+  const oldBounds = grid.bounds();
   grid.resizeTo(next);
-  return true;
+  return { expanded: true, oldBounds };
 }

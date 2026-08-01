@@ -65,6 +65,57 @@ body {
   letter-spacing: 0.04em;
 }
 
+.hud__legend {
+  margin: 0;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.62rem;
+  color: var(--ink-muted);
+  letter-spacing: 0.03em;
+}
+
+.legend__item {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.legend__swatch {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 1px;
+  flex-shrink: 0;
+}
+
+.legend__swatch--nuked {
+  background:
+    repeating-linear-gradient(
+      -45deg,
+      #252d38,
+      #252d38 2px,
+      #3d4654 2px,
+      #3d4654 3px
+    );
+  border: 1px solid #1a1f26;
+}
+
+.legend__swatch--flag {
+  background: transparent;
+  border: 1.5px solid var(--accent);
+  transform: rotate(45deg);
+  width: 0.45rem;
+  height: 0.45rem;
+}
+
+.legend__pot {
+  font-size: 0.58rem;
+  color: var(--ink);
+  opacity: 0.85;
+}
+
 .stage {
   position: relative;
   min-height: 0;
