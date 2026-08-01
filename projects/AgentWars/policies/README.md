@@ -11,7 +11,31 @@ write-up (`NNN-name.md`) and an executable module (`NNN-name.ts`).
 
 ## Active policies
 
-_None. Use gateway + pollers + jobs + UI._
+| ID | Name | Status | Runner | Notes |
+|---|---|---|---|---|
+| 003 | cartographer | **ready** | `npm run agent cartographer` | Map belief + scout + band lasso + flag hunter; **not** in ab-test.json by default |
+
+Legacy claiming is still owned by `npm run jobs` (tileClaimer + owned-flag nuker) plus the UI
+claim queue. **Do not** run cartographer alongside `npm run jobs` — shared ~20 place-tile RPS.
+
+## How to run cartographer (003)
+
+```bash
+cd game
+npm run gateway          # terminal 1
+npm run pollers          # terminal 2
+npm run agent cartographer
+
+# 10s sanity check
+AGENT_DURATION_MS=10000 npm run agent cartographer
+
+# Dry-run one planning tick
+npm run policy test 003-cartographer
+```
+
+To enable in ab-test (not recommended with jobs): add
+`{ "key": "003-cartographer", "zone": { "x": 0, "y": 0, "w": 100, "h": 100 } }` to
+`game/config/ab-test.json`.
 
 ## How to run (historical — outdated)
 
@@ -35,6 +59,7 @@ is `projects/AgentWars/`.
 |---|---|---|---|---|
 | 001 | init | **outdated** | retired | API discovery baseline — superseded by pollers + jobs |
 | 002 | autoplay | **outdated** | retired | Spiral claim loop burned rate limit + many `INVALID_TARGET`; replaced by UI queue + tileClaimer |
+| 003 | cartographer | **ready** | — | Standalone agent via `npm run agent cartographer`; do not run with jobs |
 
 ## Learnings
 

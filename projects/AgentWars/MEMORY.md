@@ -6,6 +6,7 @@ this project (`projects/AgentWars/`). Do not put these notes in the team root
 
 ## In flight
 - Game `w8pp` / player `remotematthieu999` — stack connected; empty board, waiting for place-tile accepts.
+- **003-cartographer** agent: standalone via `npm run agent cartographer` (not in ab-test.json); do not run with `npm run jobs`.
 
 ## Learned
 - Place-tile ~12 RPS plateau (API cap 20) was client limiter duty cycle, not RTT: `noteRemaining(≤3)` collapsed the wall-second cap mid-second; soft-resume was 8/400. Fix: only pause on `remaining≤0` when near cap (ignore stale 0s); pace `placeRps-1` with soft-resume 16/200. Do not locally expand fog bounds beyond the snapshot (causes 100% `OUT_OF_BOUNDS`); on OOB tighten local bounds via `excludeOutOfBoundsCell`.

@@ -18,6 +18,7 @@ import {
   runPolicyDirect,
   runPolicyTest,
 } from "./policies/supervisor.js";
+import { startCartographerAgent } from "./agents/cartographer/runner.js";
 
 const gameDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -193,6 +194,34 @@ async function runPolicyCommand(args: string[]): Promise<void> {
   process.exit(1);
 }
 
+async function runAgentCommand(args: string[]): Promise<void> {
+  const agentName = args[0];
+  if (agentName !== "cartographer") {
+    console.error("usage: agent cartographer");
+    console.error("  AGENT_DURATION_MS=10000 npm run agent cartographer  # 10s sanity run");
+    process.exit(1);
+  }
+
+  const env = loadEnvConfig();
+  const { db, pool } = createDb(env);
+  const durationMs = Number(process.env.AGENT_DURATION_MS ?? 0) || undefined;
+  const handle = await startCartographerAgent(env, db, { durationMs });
+
+  console.log(
+    `cartographer agent running${durationMs ? ` (${durationMs}ms)` : ""} — Ctrl+C to stop`,
+  );
+
+  const shutdown = async () => {
+    handle.stop();
+    await pool.end();
+    process.exit(0);
+  };
+  process.on("SIGINT", () => void shutdown());
+  process.on("SIGTERM", () => void shutdown());
+
+  await new Promise(() => {});
+}
+
 async function main(): Promise<void> {
   const [command, ...args] = process.argv.slice(2);
 
@@ -215,9 +244,12 @@ async function main(): Promise<void> {
     case "policy":
       await runPolicyCommand(args);
       break;
+    case "agent":
+      await runAgentCommand(args);
+      break;
     default:
       console.error(
-        "usage: cli.ts <gateway|pollers|jobs|start|status|policy> [args]",
+        "usage: cli.ts <gateway|pollers|jobs|start|status|policy|agent> [args]",
       );
       process.exit(1);
   }
