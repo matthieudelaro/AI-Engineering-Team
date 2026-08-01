@@ -58,6 +58,76 @@ describe("FlagHunter", () => {
     expect(hunter.isAttackWindowOpen(t0 + ENEMY_NUKE_WINDOW_MS - 1)).toBe(true);
     expect(hunter.isAttackWindowOpen(t0 + ENEMY_NUKE_WINDOW_MS + 1)).toBe(false);
   });
+
+  it("inferEnemiesWithNuke includes owners of active flags not on cooldown", () => {
+    const hunter = new FlagHunter(self);
+    const flags = [flag("a", 1, 1, 50, false)];
+    const owners = new Map([["1,1", "Enemy"]]);
+    hunter.observe(flags, owners, 1000);
+    const withNuke = hunter.inferEnemiesWithNuke(flags, owners, 1000);
+    expect(withNuke.has("Enemy")).toBe(true);
+  });
+
+  it("inferEnemiesWithNuke excludes owner who just nuked for 30s", () => {
+    const hunter = new FlagHunter(self);
+    const t0 = 0;
+    const owners = new Map([["1,1", "Enemy"]]);
+    hunter.observe([flag("a", 1, 1, 50, false)], owners, t0);
+    hunter.observe([flag("a", 1, 1, 50, true)], owners, t0 + 1);
+    const flagsAfter = [flag("a", 1, 1, 50, true), flag("b", 5, 5, 10, false)];
+    const ownersAfter = new Map([
+      ["1,1", "Enemy"],
+      ["5,5", "Enemy"],
+    ]);
+    const withNuke = hunter.inferEnemiesWithNuke(flagsAfter, ownersAfter, t0 + 2);
+    expect(withNuke.has("Enemy")).toBe(false);
+  });
+
+  it("planCapture feints when owner in enemiesWithNuke and cheap flag is adjacent", () => {
+    const hunter = new FlagHunter(self);
+    hunter.observe([flag("w", 0, 0, 1, false)], new Map([["0,0", "BigFish"]]), 0);
+    hunter.observe([flag("w", 0, 0, 1, true)], new Map([["0,0", "BigFish"]]), 1);
+    const flags = [
+      flag("cheap", 5, 5, 5, false),
+      flag("juicy", 10, 10, 100, false),
+    ];
+    const owners = new Map([
+      ["5,5", "BigFish"],
+      ["10,10", "BigFish"],
+    ]);
+    // cheap adjacent to 4,5; juicy adjacent to 9,10 — steal targets juicy, feint targets cheap.
+    const owned = new Set(["4,5", "9,10"]);
+    const plan = hunter.planCapture(
+      flags,
+      owners,
+      owned,
+      100,
+      new Set(["BigFish"]),
+    );
+    expect(plan?.reason).toBe("feint");
+    expect(plan?.target).toEqual({ x: 5, y: 5 });
+  });
+
+  it("planCapture steals directly when owner is on nuke cooldown", () => {
+    const hunter = new FlagHunter(self);
+    const t0 = 0;
+    const flags = [
+      flag("cheap", 5, 5, 5, false),
+      flag("juicy", 10, 10, 100, false),
+    ];
+    const owners = new Map([
+      ["5,5", "BigFish"],
+      ["10,10", "BigFish"],
+    ]);
+    hunter.observe([flag("cheap", 5, 5, 5, false)], new Map([["5,5", "BigFish"]]), t0);
+    hunter.observe([flag("cheap", 5, 5, 5, true)], new Map([["5,5", "BigFish"]]), t0 + 1);
+    const owned = new Set(["9,10"]);
+    const enemiesWithNuke = hunter.inferEnemiesWithNuke(flags, owners, t0 + 100);
+    expect(enemiesWithNuke.has("BigFish")).toBe(false);
+    const plan = hunter.planCapture(flags, owners, owned, t0 + 100, enemiesWithNuke);
+    expect(plan?.reason).toBe("steal");
+    expect(plan?.target).toEqual({ x: 10, y: 10 });
+  });
 });
 
 describe("selectFeintTarget", () => {

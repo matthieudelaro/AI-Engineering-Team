@@ -135,6 +135,8 @@ export class FlagHunter {
   private previousFlags = new Map<string, FlagInfo>();
   private attackWindow: NukeAttackWindow | null = null;
   private feintLaunched = false;
+  /** Enemy display name → ms until their nuke is assumed spent (after we observe a nuke). */
+  private nukeCooldownUntil = new Map<string, number>();
 
   constructor(private readonly selfName: string) {}
 
@@ -153,6 +155,35 @@ export class FlagHunter {
   }
 
   /**
+   * Heuristic when no nuke-availability API exists:
+   * - Owners of active (non-nuked) flags are assumed able to nuke.
+   * - When observe() sees an enemy nuke a flag, that owner is excluded here
+   *   for ENEMY_NUKE_WINDOW_MS (they are on cooldown — feint skipped, all-in steal).
+   */
+  inferEnemiesWithNuke(
+    flags: FlagInfo[],
+    flagOwners: Map<string, string | null>,
+    nowMs: number,
+  ): Set<string> {
+    const result = new Set<string>();
+    for (const f of flags) {
+      if (f.nuked) {
+        continue;
+      }
+      const owner = flagOwners.get(cellKey(f.x, f.y));
+      if (!owner || owner === this.selfName || owner === "neutral") {
+        continue;
+      }
+      const cooldownUntil = this.nukeCooldownUntil.get(owner);
+      if (cooldownUntil !== undefined && nowMs < cooldownUntil) {
+        continue;
+      }
+      result.add(owner);
+    }
+    return result;
+  }
+
+  /**
    * Ingest flags snapshot; returns a new attack window if an enemy just nuked.
    */
   observe(
@@ -167,6 +198,7 @@ export class FlagHunter {
       if (prev && !prev.nuked && f.nuked) {
         const owner = flagOwners.get(cellKey(f.x, f.y));
         if (owner && owner !== this.selfName) {
+          this.nukeCooldownUntil.set(owner, nowMs + ENEMY_NUKE_WINDOW_MS);
           opened = {
             enemyName: owner,
             openedAt: nowMs,
@@ -177,6 +209,13 @@ export class FlagHunter {
         }
       }
       this.previousFlags.set(f.flag_id, { ...f });
+    }
+
+    // Expire stale cooldown entries.
+    for (const [name, until] of this.nukeCooldownUntil) {
+      if (nowMs >= until) {
+        this.nukeCooldownUntil.delete(name);
+      }
     }
 
     if (

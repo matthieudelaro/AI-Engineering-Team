@@ -15,7 +15,6 @@ import {
   placeTile,
   readLatestState,
   resolveSelfContext,
-  scheduleJobTick,
   stopJobState,
   type JobHandle,
   type MapResponse,
@@ -100,193 +99,127 @@ function syncMap(
   }
 }
 
-async function cartographerTick(
-  env: Env,
-  db: Database,
-  workerState: ReturnType<typeof createJobState>,
-  limiter: TokenBucketRateLimiter,
-  selfCache: { value: SelfContext | null },
+function updateFlagOwners(agent: AgentState, occupied: Map<string, string | null>): void {
+  agent.flagOwners = flagOwnersFromMap(agent.flags, occupied);
+}
+
+type PlaceTileAction =
+  | { kind: "flag_claim"; x: number; y: number; reason: string }
+  | { kind: "territory_claim"; x: number; y: number; reason: string };
+
+/**
+ * Shared action picker for live workers: flag capture during attack window
+ * takes priority over lasso/scout/fallback territory claims.
+ */
+export function pickPlaceTileAction(
   agent: AgentState,
-  options: CartographerOptions,
-): Promise<void> {
-  if (workerState.stopped) {
-    return;
+  map: MapResponse,
+  selfName: string | null,
+  owned: Set<string>,
+  occupied: Map<string, string | null>,
+  nuked: Set<string>,
+  nowMs: number,
+): PlaceTileAction | null {
+  updateFlagOwners(agent, occupied);
+  agent.flagHunter.observe(agent.flags, agent.flagOwners, nowMs);
+
+  const enemiesWithNuke = agent.flagHunter.inferEnemiesWithNuke(
+    agent.flags,
+    agent.flagOwners,
+    nowMs,
+  );
+  const flagPlan = agent.flagHunter.planCapture(
+    agent.flags,
+    agent.flagOwners,
+    owned,
+    nowMs,
+    enemiesWithNuke,
+  );
+  if (flagPlan) {
+    const k = `${flagPlan.target.x},${flagPlan.target.y}`;
+    if (!agent.pending.has(k)) {
+      return {
+        kind: "flag_claim",
+        x: flagPlan.target.x,
+        y: flagPlan.target.y,
+        reason: flagPlan.reason,
+      };
+    }
   }
 
-  const durationMs = options.durationMs ?? Number(process.env.AGENT_DURATION_MS ?? 0);
-  if (durationMs > 0 && Date.now() - agent.startedAt >= durationMs) {
-    await logJobEvent(db, "info", "cartographer_stop", "agent duration elapsed", {
-      durationMs,
-    });
-    stopJobState(workerState);
-    return;
+  const budget = nextBudgetTick(agent.tickIndex++);
+  const belief = agent.belief;
+  if (!belief) {
+    return null;
   }
 
-  const client = new GameClient(env, {
-    source: "policy",
-    policyId: options.policyId ?? "003-cartographer",
-    runId: options.runId,
+  const pick = pickCartographerClaim({
+    map,
+    belief,
+    selfName,
+    owned,
+    occupied,
+    nuked,
+    pending: agent.pending,
+    lasso: agent.lasso,
+    scout: budget.scout,
+    nowMs,
   });
+  if (!pick) {
+    return null;
+  }
+  const k = `${pick.target.x},${pick.target.y}`;
+  if (agent.pending.has(k)) {
+    return null;
+  }
+  return {
+    kind: "territory_claim",
+    x: pick.target.x,
+    y: pick.target.y,
+    reason: pick.reason,
+  };
+}
 
-  const schedule = (delayMs: number) =>
-    scheduleJobTick(
-      workerState,
-      () =>
-        cartographerTick(env, db, workerState, limiter, selfCache, agent, options),
-      delayMs,
+async function applyPlaceTileResult(
+  result: Awaited<ReturnType<typeof placeTile>>,
+  limiter: TokenBucketRateLimiter,
+  map: MapResponse,
+  belief: MapBelief,
+  selfName: string | null,
+  pending: Set<string>,
+  x: number,
+  y: number,
+  nowMs: number,
+): Promise<void> {
+  if (result.ok) {
+    if (selfName) {
+      markTileOwned(map, selfName, x, y);
+      belief.noteClaimAccepted(selfName, x, y, nowMs);
+    }
+    limiter.noteRemaining(result.rateLimitRemaining);
+    return;
+  }
+  if (result.rateLimited) {
+    limiter.pauseFor(
+      msUntilRateLimitReset(
+        result.rateLimitReset,
+        result.rejected?.retry_after,
+      ),
     );
-
-  try {
-    const self = await resolveSelfContext(db, selfCache);
-    const map = await loadMap(db);
-
-    if (!map) {
-      await logJobEvent(db, "warn", "cartographer_no_map", "waiting for map snapshot");
-      schedule(env.POLL_INTERVAL_MS);
-      return;
-    }
-
-    const nowMs = Date.now();
-    syncMap(agent, map, self.name, nowMs);
-
-    // Poll flags via gateway (audited in api_calls).
-    const liveFlags = await fetchFlags(client, env.GAME_ID);
-    if (liveFlags.length > 0) {
-      agent.flags = liveFlags;
-    } else {
-      const cached = await readLatestState<FlagsResponse>(db, "flags");
-      if (cached?.flags) {
-        agent.flags = cached.flags;
-      }
-    }
-
-    const { owned, occupied, nuked } = buildOwnershipMap(map.tiles, self.name);
-    agent.flagOwners = flagOwnersFromMap(agent.flags, occupied);
-    agent.flagHunter.observe(agent.flags, agent.flagOwners, nowMs);
-
-    const dryRun = options.dryRun ?? env.DRY_RUN;
-    const budget = nextBudgetTick(agent.tickIndex);
-    agent.tickIndex += 1;
-
-    // Flag-hunter capture takes priority during attack window.
-    const flagPlan = agent.flagHunter.planCapture(
-      agent.flags,
-      agent.flagOwners,
-      owned,
-      nowMs,
-      new Set(),
-    );
-
-    if (flagPlan && !dryRun) {
-      const { x, y } = flagPlan.target;
-      const k = `${x},${y}`;
-      agent.pending.add(k);
-      const result = await placeTile(client, limiter, env.GAME_ID, x, y);
-      agent.pending.delete(k);
-      if (result.ok && self.name) {
-        markTileOwned(map, self.name, x, y);
-        agent.belief?.noteClaimAccepted(self.name, x, y, nowMs);
-        await logJobEvent(db, "info", "cartographer_flag_claim", flagPlan.reason, {
-          x,
-          y,
-        });
-      }
-      schedule(0);
-      return;
-    }
-
-    const nukeTarget = agent.flagHunter.planNuke(
-      agent.flags,
-      agent.flagOwners,
-      owned,
-    );
-    if (nukeTarget && !dryRun && agent.flagHunter.isAttackWindowOpen(nowMs)) {
-      const ok = await launchNuke(client, env.GAME_ID, nukeTarget.x, nukeTarget.y);
-      if (ok) {
-        await logJobEvent(db, "info", "cartographer_nuke", "celebration nuke", {
-          x: nukeTarget.x,
-          y: nukeTarget.y,
-        });
-      }
-    }
-
-    const belief = agent.belief!;
-    const pick = pickCartographerClaim({
-      map,
-      belief,
-      selfName: self.name,
-      owned,
-      occupied,
-      nuked,
-      pending: agent.pending,
-      lasso: agent.lasso,
-      scout: budget.scout,
-      nowMs,
-    });
-
-    if (!pick) {
-      schedule(50);
-      return;
-    }
-
-    if (dryRun) {
-      await logJobEvent(
-        db,
-        "info",
-        "cartographer_dry_run",
-        `would ${pick.reason} at ${pick.target.x},${pick.target.y}`,
-        { reason: pick.reason, target: pick.target },
-      );
-      schedule(100);
-      return;
-    }
-
-    const { x, y } = pick.target;
+    return;
+  }
+  const reason = result.rejected?.reason ?? "";
+  if (isOutOfBounds(reason)) {
+    excludeOutOfBoundsCell(map, x, y);
+    belief.noteOutOfBounds(x, y);
+  } else if (isInvalidTarget(reason)) {
     const k = `${x},${y}`;
-    agent.pending.add(k);
-    const result = await placeTile(client, limiter, env.GAME_ID, x, y);
-    agent.pending.delete(k);
-
-    if (result.ok) {
-      if (self.name) {
-        markTileOwned(map, self.name, x, y);
-        belief.noteClaimAccepted(self.name, x, y, nowMs);
-      }
-      limiter.noteRemaining(result.rateLimitRemaining);
-      schedule(0);
-      return;
-    }
-
-    if (result.rateLimited) {
-      limiter.pauseFor(
-        msUntilRateLimitReset(
-          result.rateLimitReset,
-          result.rejected?.retry_after,
-        ),
-      );
-      schedule(50);
-      return;
-    }
-
-    const reason = result.rejected?.reason ?? "";
-    if (isOutOfBounds(reason)) {
-      excludeOutOfBoundsCell(map, x, y);
-      belief.noteOutOfBounds(x, y);
-    } else if (isInvalidTarget(reason)) {
-      // Learn cell is not claimable — treat as occupied blocker.
-      agent.pending.add(k);
-      setTimeout(() => agent.pending.delete(k), 5000);
-    }
-
-    schedule(10);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "cartographer error";
-    await logJobEvent(db, "error", "cartographer_error", message);
-    schedule(env.POLL_INTERVAL_MS);
+    pending.add(k);
+    setTimeout(() => pending.delete(k), 5000);
   }
 }
 
-/** Parallel workers saturating place-tile RPS. */
+/** Parallel workers saturating place-tile RPS (flag capture + territory). */
 async function workerLoop(
   env: Env,
   db: Database,
@@ -318,62 +251,60 @@ async function workerLoop(
     const nowMs = Date.now();
     syncMap(agent, map, self.name, nowMs);
     const { owned, occupied, nuked } = buildOwnershipMap(map.tiles, self.name);
-    const budget = nextBudgetTick(agent.tickIndex++);
     const dryRun = options.dryRun ?? env.DRY_RUN;
 
-    const pick = pickCartographerClaim({
+    const action = pickPlaceTileAction(
+      agent,
       map,
-      belief: agent.belief,
-      selfName: self.name,
+      self.name,
       owned,
       occupied,
       nuked,
-      pending: agent.pending,
-      lasso: agent.lasso,
-      scout: budget.scout,
       nowMs,
-    });
+    );
 
-    if (!pick || dryRun) {
+    if (!action || dryRun) {
       await new Promise((r) => setTimeout(r, 20));
       continue;
     }
 
-    const { x, y } = pick.target;
+    const { x, y } = action;
     const k = `${x},${y}`;
-    if (agent.pending.has(k)) {
-      continue;
-    }
     agent.pending.add(k);
     const result = await placeTile(client, limiter, env.GAME_ID, x, y);
     agent.pending.delete(k);
 
-    if (result.ok && self.name) {
-      markTileOwned(map, self.name, x, y);
-      agent.belief.noteClaimAccepted(self.name, x, y, nowMs);
-      limiter.noteRemaining(result.rateLimitRemaining);
-    } else if (result.rateLimited) {
-      limiter.pauseFor(
-        msUntilRateLimitReset(
-          result.rateLimitReset,
-          result.rejected?.retry_after,
-        ),
-      );
-    } else {
-      const reason = result.rejected?.reason ?? "";
-      if (isOutOfBounds(reason)) {
-        excludeOutOfBoundsCell(map, x, y);
-        agent.belief.noteOutOfBounds(x, y);
-      }
+    if (result.ok && action.kind === "flag_claim") {
+      await logJobEvent(db, "info", "cartographer_flag_claim", action.reason, {
+        x,
+        y,
+      });
     }
+
+    await applyPlaceTileResult(
+      result,
+      limiter,
+      map,
+      agent.belief,
+      self.name,
+      agent.pending,
+      x,
+      y,
+      nowMs,
+    );
   }
 }
 
-async function flagPollLoop(
+/**
+ * Polls flags via gateway and executes celebration nukes when we own a stolen
+ * enemy flag during an attack window.
+ */
+async function flagLoop(
   env: Env,
   db: Database,
   agent: AgentState,
   options: CartographerOptions,
+  selfCache: { value: SelfContext | null },
   stop: () => boolean,
 ): Promise<void> {
   const client = new GameClient(env, {
@@ -381,6 +312,7 @@ async function flagPollLoop(
     policyId: options.policyId ?? "003-cartographer",
     runId: options.runId,
   });
+  const dryRun = options.dryRun ?? env.DRY_RUN;
 
   while (!stop()) {
     const durationMs = options.durationMs ?? Number(process.env.AGENT_DURATION_MS ?? 0);
@@ -388,17 +320,48 @@ async function flagPollLoop(
       return;
     }
 
+    const nowMs = Date.now();
     const flags = await fetchFlags(client, env.GAME_ID);
     if (flags.length > 0) {
       agent.flags = flags;
-      const map = agent.map ?? (await loadMap(db));
-      if (map) {
-        const self = await resolveSelfContext(db, { value: null });
-        const { occupied } = buildOwnershipMap(map.tiles, self.name);
-        agent.flagOwners = flagOwnersFromMap(flags, occupied);
-        agent.flagHunter.observe(flags, agent.flagOwners, Date.now());
+    } else {
+      const cached = await readLatestState<FlagsResponse>(db, "flags");
+      if (cached?.flags) {
+        agent.flags = cached.flags;
       }
     }
+
+    const map = agent.map ?? (await loadMap(db));
+    if (map && agent.flags.length > 0) {
+      const self = await resolveSelfContext(db, selfCache);
+      const { owned, occupied } = buildOwnershipMap(map.tiles, self.name);
+      updateFlagOwners(agent, occupied);
+      agent.flagHunter.observe(agent.flags, agent.flagOwners, nowMs);
+
+      if (agent.flagHunter.isAttackWindowOpen(nowMs) && !dryRun) {
+        const nukeTarget = agent.flagHunter.planNuke(
+          agent.flags,
+          agent.flagOwners,
+          owned,
+        );
+        if (nukeTarget) {
+          const ok = await launchNuke(
+            client,
+            env.GAME_ID,
+            nukeTarget.x,
+            nukeTarget.y,
+          );
+          if (ok) {
+            await logJobEvent(db, "info", "cartographer_nuke", "celebration nuke", {
+              x: nukeTarget.x,
+              y: nukeTarget.y,
+              flagId: nukeTarget.flagId,
+            });
+          }
+        }
+      }
+    }
+
     await new Promise((r) => setTimeout(r, env.POLL_INTERVAL_MS));
   }
 }
@@ -431,7 +394,6 @@ export async function startCartographerAgent(
 
   const stop = () => workerState.stopped;
 
-  // Resolve self name for flag hunter
   const self = await resolveSelfContext(db, selfCache);
   agent.flagHunter = new FlagHunter(self.name ?? "");
 
@@ -439,9 +401,8 @@ export async function startCartographerAgent(
   for (let i = 0; i < workerCount; i++) {
     void workerLoop(env, db, limiter, selfCache, agent, options, stop);
   }
-  void flagPollLoop(env, db, agent, options, stop);
+  void flagLoop(env, db, agent, options, selfCache, stop);
 
-  // Duration watchdog
   const durationMs = options.durationMs ?? Number(process.env.AGENT_DURATION_MS ?? 0);
   if (durationMs > 0) {
     setTimeout(() => {
@@ -454,36 +415,40 @@ export async function startCartographerAgent(
   };
 }
 
-/** Single-tick runner for policy test / dry-run (no worker pool). */
-export async function runCartographerOnce(
-  env: Env,
-  db: Database,
-  options: CartographerOptions = {},
-): Promise<void> {
-  const limiter = await createPlaceTileLimiter(env);
-  const workerState = createJobState();
-  const selfCache = { value: null as SelfContext | null };
+/** Test helper — builds minimal agent state for pickPlaceTileAction. */
+export function pickPlaceTileActionForTest(input: {
+  belief: MapBelief;
+  lasso: LassoBandPlanner;
+  flagHunter: FlagHunter;
+  flags: FlagInfo[];
+  flagOwners: Map<string, string | null>;
+  map: MapResponse;
+  selfName: string | null;
+  owned: Set<string>;
+  occupied: Map<string, string | null>;
+  nuked: Set<string>;
+  pending: Set<string>;
+  tickIndex: number;
+  nowMs: number;
+}): PlaceTileAction | null {
   const agent: AgentState = {
-    belief: null,
-    lasso: new LassoBandPlanner(),
-    flagHunter: new FlagHunter(""),
-    map: null,
-    tickIndex: 0,
-    pending: new Set(),
-    startedAt: Date.now(),
-    flags: [],
-    flagOwners: new Map(),
+    belief: input.belief,
+    lasso: input.lasso,
+    flagHunter: input.flagHunter,
+    map: input.map,
+    tickIndex: input.tickIndex,
+    pending: input.pending,
+    startedAt: 0,
+    flags: input.flags,
+    flagOwners: input.flagOwners,
   };
-  const self = await resolveSelfContext(db, selfCache);
-  agent.flagHunter = new FlagHunter(self.name ?? "");
-
-  await cartographerTick(
-    env,
-    db,
-    workerState,
-    limiter,
-    selfCache,
+  return pickPlaceTileAction(
     agent,
-    { ...options, dryRun: true },
+    input.map,
+    input.selfName,
+    input.owned,
+    input.occupied,
+    input.nuked,
+    input.nowMs,
   );
 }

@@ -16,7 +16,9 @@ exploits enemy nuke cooldowns to steal high-value flags.
    closing; map edges and nuked tiles count as walls.
 5. **Flag hunter** — poll `GET /api/v1/flags`; when an enemy nukes their flag,
    assume ~30s cooldown and feint/steal a nearby valuable flag, then `launch-nuke`
-   on capture.
+   on capture. **Nuke heuristic (no availability API):** owners of active non-nuked
+   flags are assumed able to nuke; once we observe an enemy nuke, exclude them for
+   30s (feint skipped → all-in steal).
 6. **Fallback** — random in-bounds non-owned claims when no smart plan.
 
 ## How to run
