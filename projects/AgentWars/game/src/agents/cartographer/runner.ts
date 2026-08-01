@@ -243,13 +243,19 @@ async function workerLoop(
 
     const self = await resolveSelfContext(db, selfCache);
     const map = await loadMap(db);
-    if (!map || !agent.belief) {
+    if (!map) {
       await new Promise((r) => setTimeout(r, 200));
       continue;
     }
 
     const nowMs = Date.now();
+    // Must sync before the belief guard — otherwise workers spin forever with
+    // belief === null and never place tiles.
     syncMap(agent, map, self.name, nowMs);
+    if (!agent.belief) {
+      await new Promise((r) => setTimeout(r, 200));
+      continue;
+    }
     const { owned, occupied, nuked } = buildOwnershipMap(map.tiles, self.name);
     const dryRun = options.dryRun ?? env.DRY_RUN;
 
