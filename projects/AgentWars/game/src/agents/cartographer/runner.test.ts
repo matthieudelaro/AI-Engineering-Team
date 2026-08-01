@@ -12,14 +12,6 @@ function flag(id: string, x: number, y: number, pot: number): FlagInfo {
 
 describe("pickPlaceTileAction", () => {
   const bounds = { min_x: 0, min_y: 0, max_x: 20, max_y: 20 };
-  const map: MapResponse = {
-    bounds,
-    tiles: [
-      { x: 4, y: 5, ownership: { owned: "Me" } },
-      { x: 10, y: 10, ownership: { owned: "BigFish" } },
-    ],
-  };
-
   it("prioritizes flag steal over territory claim during attack window", () => {
     const self = "Me";
     const mapWithFrontier: MapResponse = {

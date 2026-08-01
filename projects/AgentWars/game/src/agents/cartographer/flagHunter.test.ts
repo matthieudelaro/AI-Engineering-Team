@@ -128,6 +128,58 @@ describe("FlagHunter", () => {
     expect(plan?.reason).toBe("steal");
     expect(plan?.target).toEqual({ x: 10, y: 10 });
   });
+
+  describe("planNuke", () => {
+    it("returns active flag on a tile we own", () => {
+      const hunter = new FlagHunter(self);
+      const flags = [flag("stolen", 10, 10, 80, false)];
+      const owners = new Map([["10,10", self]]);
+      const owned = new Set(["10,10"]);
+      expect(hunter.planNuke(flags, owners, owned)).toEqual({
+        flagId: "stolen",
+        x: 10,
+        y: 10,
+      });
+    });
+
+    it("prefers highest pot among owned active flags", () => {
+      const hunter = new FlagHunter(self);
+      const flags = [
+        flag("small", 1, 1, 10, false),
+        flag("big", 2, 2, 100, false),
+      ];
+      const owners = new Map([
+        ["1,1", self],
+        ["2,2", self],
+      ]);
+      const owned = new Set(["1,1", "2,2"]);
+      expect(hunter.planNuke(flags, owners, owned)?.flagId).toBe("big");
+    });
+
+    it("returns null for enemy-owned tiles not in owned set", () => {
+      const hunter = new FlagHunter(self);
+      const flags = [flag("enemy", 5, 5, 50, false)];
+      const owners = new Map([["5,5", "Enemy"]]);
+      const owned = new Set<string>();
+      expect(hunter.planNuke(flags, owners, owned)).toBeNull();
+    });
+
+    it("returns null for nuked flags even when we own the tile", () => {
+      const hunter = new FlagHunter(self);
+      const flags = [flag("dead", 3, 3, 50, true)];
+      const owners = new Map([["3,3", self]]);
+      const owned = new Set(["3,3"]);
+      expect(hunter.planNuke(flags, owners, owned)).toBeNull();
+    });
+
+    it("returns null when flag tile is not owned", () => {
+      const hunter = new FlagHunter(self);
+      const flags = [flag("far", 8, 8, 20, false)];
+      const owners = new Map<string, string | null>();
+      const owned = new Set(["1,1"]);
+      expect(hunter.planNuke(flags, owners, owned)).toBeNull();
+    });
+  });
 });
 
 describe("selectFeintTarget", () => {

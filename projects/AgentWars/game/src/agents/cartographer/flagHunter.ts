@@ -290,12 +290,21 @@ export class FlagHunter {
     return null;
   }
 
-  /** After capturing enemy flag tile, nuke it for celebration points. */
+  /**
+   * Celebration nuke: active flags on tiles we own (same rule as
+   * `nukeOwnedFlags.ownedFlagTargets`). Prefers highest pot; during an attack
+   * window, prefers flags owned by the window enemy when map ownership is still
+   * stale.
+   */
   planNuke(
     flags: FlagInfo[],
     flagOwners: Map<string, string | null>,
     owned: Set<string>,
   ): { flagId: string; x: number; y: number } | null {
+    const windowEnemy = this.attackWindow?.enemyName;
+    let best: { flagId: string; x: number; y: number; pot: number; score: number } | null =
+      null;
+
     for (const f of flags) {
       if (f.nuked) {
         continue;
@@ -304,11 +313,21 @@ export class FlagHunter {
       if (!owned.has(k)) {
         continue;
       }
+      // Prefer highest pot; boost flags still attributed to the window enemy
+      // (capture just landed — map owned set is ahead of flag owner cache).
       const owner = flagOwners.get(k);
-      if (owner && owner !== this.selfName) {
-        return { flagId: f.flag_id, x: f.x, y: f.y };
+      let score = f.pot;
+      if (windowEnemy && owner === windowEnemy) {
+        score += 10_000;
+      }
+      if (!best || score > best.score) {
+        best = { flagId: f.flag_id, x: f.x, y: f.y, pot: f.pot, score };
       }
     }
-    return null;
+
+    if (!best) {
+      return null;
+    }
+    return { flagId: best.flagId, x: best.x, y: best.y };
   }
 }
