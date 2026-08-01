@@ -7,6 +7,7 @@ this project (`projects/AgentWars/`). Do not put these notes in the team root
 ## In flight
 - Local game server at `projects/AgentWars/server/` — OpenAPI-compatible engine + spectator + harness. Point `GAME_API_URL=http://127.0.0.1:8000`.
 - **003-cartographer** agent: standalone via `npm run agent cartographer` (not in ab-test.json); do not run with `npm run jobs`.
+- Live local match `live5m2` (5 min): server + Spammer + `cartographer-adversaire` (nuke 1/min) + cartographer as `manual-assisted-by-computer`. Spectator: `http://127.0.0.1:8000/spectator?game_id=live5m2`. Do not wipe postgres volumes.
 
 ## Learned (server)
 - Sustained ~19.5 place-tile/s per player × 8 on a large seeded map (p95 ~3ms). Starter 11×11 OOB-rejects look like rate problems — expand/seed first when load-testing.
@@ -21,7 +22,8 @@ this project (`projects/AgentWars/`). Do not put these notes in the team root
 - Game UI map “jumps” on API sync were from bounds `min_x`/`min_y` shifting world pixels without camera compensation, plus `fitToView` on every expansion. Fix: compensate translate; refit only on initial load.
 - New games with empty `tiles: []` broke map-stream bootstrap/persist (`tiles.length === 0` treated as failure), so claim jobs kept reading multi‑MB prior-game map rows from `game_states` and froze. Fix: allow empty usable maps; read cache one row at a time. Keep old `game_states` rows for learning — do not delete across games.
 - Fast switch onto a new game: `./scripts/new-game.sh <gameId> <playerId>` (playbook `playbooks/002-new-game.md`). Re-apply CLI args after sourcing `.env` so `GAME_ID` is not clobbered; start stack with `setsid` so agent shell exit does not kill processes.
-- Map player colors must stay sticky by `display_name` (not `tile_count`/rank). Ignore tile `ownership.color`; resolve via `buildPlayerColors` / `mapColorForPlayer`. Spectator UI must also keep sticky colors (never `colorByName.clear()` each poll).
+- Map player colors must stay sticky by `display_name` (not `tile_count`/rank). Ignore tile `ownership.color`; resolve via `buildPlayerColors` / `mapColorForPlayer`. Spectator UI must also keep sticky colors (never `colorByName.clear()` each poll) — assign from `SPECTATOR_PALETTE` on first sight. Server auto-register uses `nextDistinctColor` (unused palette slot).
+- Local opponents for cartographer matches on the real server: `node scripts/spammer.mjs` + `node scripts/cartographer-adversaire.mjs` (flag chase + defensive nuke). Prefer over `mock-game-api.ts` when validating nukes/flags. Historical stack player display name: `manual-assisted-by-computer` (`PLAYER_ID` stays `remotematthieu999` for competition).
 - Fog hides map `has_flag`; show flags from gateway-cached GetFlags (`fetchFlags` → `game_states` `flags`) merged into paint coords via `flagOverlay`.
 - Owned-flag nuke job (`game/src/jobs/nukeOwnedFlags.ts`) starts with `npm run jobs` / `npm start`: nukes flags on our tiles using cached map+flags; spend cap **100 pts / rolling 3 min** (`NUKE_RATE_LIMIT` / `NUKE_RATE_WINDOW_MS`). GetFlags has `nuked` but not owner — join with map `ownership.owned`.
 - Gateway UI claim queue (`game/src/gateway/uiClaimQueue.ts`): `GET /_gateway/ui-claim-queue` returns `getUiClaimQueueStats()` (pending/inFlight/total/pendingRetries + fifo `head` preview, max 10). `DELETE /_gateway/ui-claim-queue` calls `clearUiClaimQueue()` (204). Tests use `resetUiClaimQueue()` — same implementation as clear.

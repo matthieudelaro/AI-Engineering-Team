@@ -28,7 +28,7 @@ const MIN_SHOT_ROOM = Number(process.env.NUKE_MIN_SHOT_BUDGET ?? 5);
 const COOLDOWN_MS = 30_000;
 const IDLE_MS = 5_000;
 const LONG_IDLE_MS = 60_000;
-const SELF_FALLBACK = "RemoteMatthieu";
+const SELF_FALLBACK = "manual-assisted-by-computer";
 
 interface FlagInfo {
   flag_id: string;

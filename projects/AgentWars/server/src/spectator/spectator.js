@@ -14,6 +14,21 @@ const EMPTY_COLOR = "#1a222c";
 const NUKED_BASE = "#252d38";
 const FLAG_UNCLAIMED = "#6b7d8f";
 
+/**
+ * High-contrast spectator palette (max 8 players). Assigned in join order and
+ * never reassigned for the life of the page — rank / API color churn cannot swap hues.
+ */
+const SPECTATOR_PALETTE = [
+  "#e6194b", // vivid red
+  "#3cb44b", // green
+  "#4363d8", // blue
+  "#f58231", // orange
+  "#911eb4", // purple
+  "#42d4f4", // cyan
+  "#f032e6", // magenta
+  "#bfef45", // lime
+];
+
 const params = new URLSearchParams(window.location.search);
 const gameId = params.get("game_id") || "default";
 
@@ -24,8 +39,11 @@ const tickLabel = /** @type {HTMLElement} */ (document.getElementById("tick-labe
 const leaderboardEl = /** @type {HTMLElement} */ (document.getElementById("leaderboard"));
 const statusEl = /** @type {HTMLElement} */ (document.getElementById("status"));
 
+/** Sticky display_name → color for this spectator session. Never cleared. */
 /** @type {Map<string, string>} */
 const colorByName = new Map();
+/** @type {Set<string>} */
+const usedColors = new Set();
 /** @type {Map<string, string>} */
 const prevOwnerByCell = new Map();
 /** @type {Map<string, { until: number; phase: number }>} */
@@ -73,6 +91,91 @@ function tileColor(ownership) {
 function ownerColor(name) {
   if (!name) return FLAG_UNCLAIMED;
   return colorByName.get(name) ?? "#4a5568";
+}
+
+function normalizeColorKey(hex) {
+  return String(hex ?? "")
+    .trim()
+    .toLowerCase();
+}
+
+function hashHue(name) {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
+  }
+  return hash % 360;
+}
+
+function hslToHex(h, s, l) {
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = l - c / 2;
+  let rn = 0;
+  let gn = 0;
+  let bn = 0;
+  if (h < 60) {
+    rn = c;
+    gn = x;
+  } else if (h < 120) {
+    rn = x;
+    gn = c;
+  } else if (h < 180) {
+    gn = c;
+    bn = x;
+  } else if (h < 240) {
+    gn = x;
+    bn = c;
+  } else if (h < 300) {
+    rn = x;
+    bn = c;
+  } else {
+    rn = c;
+    bn = x;
+  }
+  const toByte = (v) =>
+    Math.round((v + m) * 255)
+      .toString(16)
+      .padStart(2, "0");
+  return `#${toByte(rn)}${toByte(gn)}${toByte(bn)}`;
+}
+
+/** Assign a sticky, maximally distinct color the first time a player appears. */
+function ensurePlayerColor(displayName, apiColor) {
+  const existing = colorByName.get(displayName);
+  if (existing) return existing;
+
+  const tryAssign = (candidate) => {
+    const key = normalizeColorKey(candidate);
+    if (!key || usedColors.has(key)) return null;
+    colorByName.set(displayName, candidate);
+    usedColors.add(key);
+    return candidate;
+  };
+
+  // Prefer next free palette slot (maximally spread hues) over API color —
+  // API often reuses the same few tones across auto-registered players.
+  for (const swatch of SPECTATOR_PALETTE) {
+    const hit = tryAssign(swatch);
+    if (hit) return hit;
+  }
+
+  const preferred = normalizeColorKey(apiColor);
+  if (preferred && preferred.startsWith("#") && preferred.length === 7) {
+    const hit = tryAssign(preferred);
+    if (hit) return hit;
+  }
+
+  for (let step = 0; step < 36; step++) {
+    const hue = (hashHue(displayName) + step * 10) % 360;
+    const hit = tryAssign(hslToHex(hue, 0.72, 0.5));
+    if (hit) return hit;
+  }
+
+  const fallback = hslToHex(hashHue(displayName), 0.65, 0.52);
+  colorByName.set(displayName, fallback);
+  usedColors.add(normalizeColorKey(fallback));
+  return fallback;
 }
 
 function createNukedPattern() {
@@ -169,9 +272,12 @@ function findFlagAt(mx, my) {
 }
 
 function renderLeaderboard(view) {
-  colorByName.clear();
-  for (const entry of view.entries) {
-    colorByName.set(entry.display_name, entry.color);
+  // Sticky assign on first sight; never recolor existing players when rank changes.
+  const sortedNewcomers = [...view.entries]
+    .filter((e) => !colorByName.has(e.display_name))
+    .sort((a, b) => a.display_name.localeCompare(b.display_name));
+  for (const entry of sortedNewcomers) {
+    ensurePlayerColor(entry.display_name, entry.color);
   }
 
   if (view.entries.length === 0) {
@@ -183,9 +289,10 @@ function renderLeaderboard(view) {
   leaderboardEl.innerHTML = view.entries
     .map((e) => {
       const flagsHeld = e.flags_held ?? 0;
+      const color = colorByName.get(e.display_name) ?? e.color;
       return `
     <div class="leaderboard__entry">
-      <span class="leaderboard__swatch" style="background:${e.color}"></span>
+      <span class="leaderboard__swatch" style="background:${color}"></span>
       <span class="leaderboard__name">${escapeHtml(e.display_name)}</span>
       <span class="leaderboard__stats">${e.tile_count} tiles · ${flagsHeld} flags · ${e.score} pts</span>
     </div>`;

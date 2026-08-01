@@ -38,6 +38,24 @@ describe("FlagHunter", () => {
     expect(window?.expiresAt).toBe(t0 + 1000 + ENEMY_NUKE_WINDOW_MS);
   });
 
+  it("attributes nuker from previous owner when map cell is already nuked", () => {
+    const hunter = new FlagHunter(self);
+    const t0 = 1_000_000;
+    hunter.observe(
+      [flag("a", 1, 1, 50, false)],
+      new Map([["1,1", "Enemy"]]),
+      t0,
+    );
+    // Real API: after nuke, tile ownership is "nuked", not the prior owner.
+    const window = hunter.observe(
+      [flag("a", 1, 1, 50, true)],
+      new Map([["1,1", "nuked"]]),
+      t0 + 1000,
+    );
+    expect(window).not.toBeNull();
+    expect(window?.enemyName).toBe("Enemy");
+  });
+
   it("does not open window when our own flag is nuked", () => {
     const hunter = new FlagHunter(self);
     const t0 = 0;

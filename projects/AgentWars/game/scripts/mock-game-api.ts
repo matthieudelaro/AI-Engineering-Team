@@ -3,8 +3,8 @@
  * Multiplayer mock game API for local cartographer matches when the real
  * upstream (172.16.1.190) is unreachable.
  *
- * Simulates opponents "matthieu" (flag grabber + defensive nuke) and
- * "Spammer" (aggressive claim spam) alongside our player.
+ * Simulates opponents "cartographer-adversaire" (flag grabber + defensive nuke)
+ * and "Spammer" (aggressive claim spam) alongside our player.
  *
  * Usage:
  *   npx tsx scripts/mock-game-api.ts
@@ -15,7 +15,9 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 const PORT = Number(process.env.MOCK_GAME_PORT ?? 8000);
 const GAME_ID = process.env.GAME_ID ?? "mock5m";
 const SELF_PLAYER_ID = process.env.PLAYER_ID ?? "remotematthieu999";
-const SELF_NAME = process.env.SELF_DISPLAY_NAME ?? "RemoteMatthieu";
+const SELF_NAME =
+  process.env.SELF_DISPLAY_NAME ?? "manual-assisted-by-computer";
+const ADVERSARY = "cartographer-adversaire";
 const HALF = Number(process.env.MOCK_MAP_HALF ?? 40);
 const BOT_CLAIM_MS = Number(process.env.MOCK_BOT_CLAIM_MS ?? 70);
 
@@ -55,7 +57,7 @@ const NUKE_COOLDOWN_MS = 30_000;
 
 const PLAYER_ID_TO_NAME: Record<string, string> = {
   [SELF_PLAYER_ID]: SELF_NAME,
-  matthieu: "matthieu",
+  [ADVERSARY]: ADVERSARY,
   Spammer: "Spammer",
 };
 
@@ -154,10 +156,10 @@ function seedStarts(): void {
       setOwner(dx, dy, SELF_NAME);
     }
   }
-  // matthieu: SW corner near flag (stay away from origin)
+  // cartographer-adversaire: SW corner near flag (stay away from origin)
   for (let dx = -2; dx <= 2; dx++) {
     for (let dy = -2; dy <= 2; dy++) {
-      setOwner(-28 + dx, -28 + dy, "matthieu");
+      setOwner(-28 + dx, -28 + dy, ADVERSARY);
     }
   }
   // Spammer: NE corner
@@ -227,33 +229,33 @@ function botGrow(name: string): void {
   claimTile(name, pick.x, pick.y);
 }
 
-/** Prefer flags closer to matthieu's SW foothold, then by pot. */
-function matthieuFlagPriority(f: Flag): number {
+/** Prefer flags closer to adversary SW foothold, then by pot. */
+function adversaryFlagPriority(f: Flag): number {
   const dist = Math.abs(f.x + 28) + Math.abs(f.y + 28);
   return f.pot * 10 - dist;
 }
 
-/** matthieu: grow toward nearby valuable flags, defensive nuke. */
-function matthieuTick(nowMs: number): void {
-  const owned = ownedList("matthieu");
+/** cartographer-adversaire: grow toward nearby valuable flags, defensive nuke. */
+function adversaryTick(nowMs: number): void {
+  const owned = ownedList(ADVERSARY);
   const activeFlags = flags
     .filter((f) => !f.nuked)
-    .sort((a, b) => matthieuFlagPriority(b) - matthieuFlagPriority(a));
+    .sort((a, b) => adversaryFlagPriority(b) - adversaryFlagPriority(a));
 
   for (const f of activeFlags) {
     const owner = ownerOf(f.x, f.y);
-    if (owner === "matthieu") {
+    if (owner === ADVERSARY) {
       let threatened = false;
       for (const { dx, dy } of CARDINALS) {
         const o = ownerOf(f.x + dx, f.y + dy);
-        if (o && o !== "matthieu" && o !== "nuked") {
+        if (o && o !== ADVERSARY && o !== "nuked") {
           threatened = true;
           break;
         }
       }
-      if (threatened && canNuke("matthieu", nowMs)) {
+      if (threatened && canNuke(ADVERSARY, nowMs)) {
         nukeCell(f.x, f.y);
-        lastNukeAt.set("matthieu", nowMs);
+        lastNukeAt.set(ADVERSARY, nowMs);
         return;
       }
       continue;
@@ -261,7 +263,7 @@ function matthieuTick(nowMs: number): void {
     if (owned.length === 0) {
       continue;
     }
-    // Only dive for flags reasonably near matthieu territory.
+    // Only dive for flags reasonably near adversary territory.
     const near = owned.some(
       (p) => Math.abs(p.x - f.x) + Math.abs(p.y - f.y) <= 20,
     );
@@ -269,17 +271,17 @@ function matthieuTick(nowMs: number): void {
       continue;
     }
     if (owner !== "nuked") {
-      claimTile("matthieu", f.x, f.y);
+      claimTile(ADVERSARY, f.x, f.y);
       for (let dx = -1; dx <= 1; dx++) {
         for (let dy = -1; dy <= 1; dy++) {
           if (dx === 0 && dy === 0) continue;
-          claimTile("matthieu", f.x + dx, f.y + dy);
+          claimTile(ADVERSARY, f.x + dx, f.y + dy);
         }
       }
       return;
     }
   }
-  botGrow("matthieu");
+  botGrow(ADVERSARY);
 }
 
 /** Spammer: blast claims aggressively from NE foothold. */
@@ -307,7 +309,7 @@ setInterval(() => {
     return;
   }
   const now = Date.now();
-  matthieuTick(now);
+  adversaryTick(now);
   spammerTick();
   growPots();
 }, BOT_CLAIM_MS);
@@ -362,9 +364,9 @@ const server = createServer(async (req, res) => {
         score_streams: { nuke_cost: 5 },
       },
       {
-        display_name: "matthieu",
+        display_name: ADVERSARY,
         is_self: false,
-        tile_count: countTiles("matthieu"),
+        tile_count: countTiles(ADVERSARY),
       },
       {
         display_name: "Spammer",
@@ -439,6 +441,6 @@ const server = createServer(async (req, res) => {
 
 server.listen(PORT, "127.0.0.1", () => {
   console.log(
-    `mock multiplayer API on http://127.0.0.1:${PORT} game=${GAME_ID} self=${SELF_NAME} vs matthieu + Spammer`,
+    `mock multiplayer API on http://127.0.0.1:${PORT} game=${GAME_ID} self=${SELF_NAME} vs ${ADVERSARY} + Spammer`,
   );
 });

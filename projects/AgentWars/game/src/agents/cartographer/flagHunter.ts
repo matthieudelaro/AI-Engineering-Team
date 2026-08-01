@@ -133,6 +133,8 @@ export function selectStealTarget(
 
 export class FlagHunter {
   private previousFlags = new Map<string, FlagInfo>();
+  /** Last known non-nuked owner per flag — survives map ownership flipping to "nuked". */
+  private previousOwners = new Map<string, string>();
   private attackWindow: NukeAttackWindow | null = null;
   private feintLaunched = false;
   /** Enemy display name → ms until their nuke is assumed spent (after we observe a nuke). */
@@ -195,9 +197,21 @@ export class FlagHunter {
 
     for (const f of flags) {
       const prev = this.previousFlags.get(f.flag_id);
+      const liveOwner = flagOwners.get(cellKey(f.x, f.y));
+      // Map ownership becomes "nuked" after a nuke — keep the prior real owner.
+      if (
+        liveOwner &&
+        liveOwner !== "nuked" &&
+        liveOwner !== "neutral"
+      ) {
+        this.previousOwners.set(f.flag_id, liveOwner);
+      }
+
       if (prev && !prev.nuked && f.nuked) {
-        const owner = flagOwners.get(cellKey(f.x, f.y));
-        if (owner && owner !== this.selfName) {
+        const owner =
+          this.previousOwners.get(f.flag_id) ??
+          (liveOwner && liveOwner !== "nuked" ? liveOwner : null);
+        if (owner && owner !== this.selfName && owner !== "nuked") {
           this.nukeCooldownUntil.set(owner, nowMs + ENEMY_NUKE_WINDOW_MS);
           opened = {
             enemyName: owner,
