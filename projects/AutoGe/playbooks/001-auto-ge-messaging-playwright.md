@@ -13,6 +13,22 @@ the post-click form state are not reliable delivery signals.
 - The message is non-empty and no longer than 250 Unicode characters.
 - No earlier send for the same action is pending or marked `delivery_unknown`.
 
+## Login verification
+
+1. Attach to the user's persistent Chrome session and use Playwright for page
+   interaction.
+2. Open `/en/my-messages.html`, wait for `domcontentloaded`, and capture a fresh
+   DOM snapshot.
+3. If the snapshot exposes `Email`, `Password`, and `Sign in`, stop automated
+   work and hand the tab to the user for manual login. Never inspect field values,
+   password-manager state, cookies, local storage or session identifiers.
+4. When the user says login is complete, claim the same tab and capture another
+   fresh snapshot. Authentication is confirmed only when the conversation table
+   and `my-messages.html?id=<id>` links are visible.
+5. Prefer Playwright locators and snapshots for all later navigation, history
+   reads and message actions. Use visual browser control only when selector
+   discovery or a Playwright limitation requires it.
+
 ## Load message history
 
 1. Open `https://www.auto.ge/en/my-messages.html` with the Chrome browser skill.

@@ -22,7 +22,15 @@ run. Use `REPORT-TEMPLATE.md` as the output contract.
    translation, listing link and discussion link in adjacent table columns.
 7. Source and verify active Auto.ge listings that improve coverage of the user's
    vehicle strategies.
-8. Deliver the report and request explicit decisions.
+8. Archive append-only structured events for every analyzed listing, including
+   retained, rejected and incomplete offers. A listing must never exist only in a
+   narrative report.
+9. Run `npm run registry:generate` to rebuild `OFFER-REGISTRY.md` from all local
+   structured event batches.
+10. Run `npm run registry:check`. Resolve every missing narrative listing, missing
+    audit field or stale projection before proceeding.
+11. Only after the registry check passes, deliver the report and request explicit
+    decisions.
 
 ## Reporting requirements
 
@@ -45,6 +53,27 @@ fit: sleeping length, standing height, Georgian-road capability, reliability,
 parts availability, total cost and resale liquidity. Never infer an unreported
 dimension, VIN history or mechanical condition. Archive useful raw artifacts under
 ignored `data/` and sanitized structured observations as append-only events.
+
+`OFFER-REGISTRY.md` is the canonical human-readable projection of every analyzed
+offer. The append-only events remain the evidence source; do not edit registry
+rows by hand. Every analyzed offer must project a listing ID, URL where known,
+disposition, contact state and source evidence into the registry before report
+delivery.
+
+Treat publicly displayed seller phone numbers as a default discovery field. Every
+new listing observation must state whether phone collection was `observed`,
+`not_available`, or `not_checked` and include an array even when it is empty.
+Preserve exact display text, deduplicate by digits, and infer Georgian `+995` E.164
+only for an unambiguous mobile pattern. Actual seller phone values belong only in
+the append-only event/projection store or ignored artifacts; never copy them into
+Git-tracked reports, docs, fixtures, logs, prompts, or Google Sheets.
+
+Reject a listing when the vehicle is physically abroad, in transit, or awaiting
+shipment. For a vehicle already in Georgia but not customs-cleared, calculate a
+current customs estimate before ranking it and report the advertised price,
+estimated clearance cost, assumptions and customs-inclusive total. Verify current
+rates against the Georgian Revenue Service calculator or current Tax Code; do not
+reuse a stale rate table.
 
 ## Approval and authentication
 

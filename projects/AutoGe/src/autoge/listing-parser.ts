@@ -5,22 +5,100 @@ const listingInputSchema = z.object({
   text: z.string().min(1),
 });
 
-export interface AutoGeListingObservation {
-  readonly listingId: string;
-  readonly url: string;
-  readonly make: string;
-  readonly model: string;
-  readonly priceAmount?: number;
-  readonly priceCurrency?: "GEL" | "USD";
-  readonly year?: number;
-  readonly mileage?: number;
-  readonly mileageUnit?: "km" | "miles";
-  readonly drivetrain?: string;
-  readonly customsStatus?: string;
-  readonly location?: string;
-  readonly referenceNumber?: string;
-  readonly postedAtText?: string;
-}
+const MAX_SELLER_PHONE_NUMBERS = 10;
+const MAX_PHONE_DISPLAY_TEXT_LENGTH = 64;
+const PHONE_DISPLAY_PATTERN = /^[-+0-9 \t\u00a0().,/;|]+$/;
+
+export const phoneCollectionStatusSchema = z.enum([
+  "observed",
+  "not_available",
+  "not_checked",
+]);
+
+export const sellerPhoneNumberSchema = z
+  .object({
+    displayText: z
+      .string()
+      .min(1)
+      .max(MAX_PHONE_DISPLAY_TEXT_LENGTH)
+      .regex(PHONE_DISPLAY_PATTERN),
+    digits: z.string().regex(/^[0-9]{3,15}$/),
+    e164: z
+      .string()
+      .regex(/^\+[1-9][0-9]{7,14}$/)
+      .optional(),
+  })
+  .strict()
+  .superRefine(({ displayText, digits, e164 }, context) => {
+    if (digitsOnly(displayText) !== digits) {
+      context.addIssue({
+        code: "custom",
+        message: "Phone digits must match the displayed value.",
+        path: ["digits"],
+      });
+    }
+
+    if (e164 !== undefined && e164 !== toGeorgianMobileE164(digits)) {
+      context.addIssue({
+        code: "custom",
+        message:
+          "E.164 must be the exact normalization of an unambiguous Georgian mobile number.",
+        path: ["e164"],
+      });
+    }
+  });
+
+export const sellerPhoneNumbersSchema = z
+  .array(sellerPhoneNumberSchema)
+  .max(MAX_SELLER_PHONE_NUMBERS);
+
+export const autoGeListingObservationSchema = z
+  .object({
+    listingId: z.string().regex(/^[0-9]+$/),
+    url: z.url(),
+    make: z.string().min(1),
+    model: z.string().min(1),
+    priceAmount: z.number().nonnegative().optional(),
+    priceCurrency: z.enum(["GEL", "USD"]).optional(),
+    year: z.int().positive().optional(),
+    mileage: z.number().nonnegative().optional(),
+    mileageUnit: z.enum(["km", "miles"]).optional(),
+    drivetrain: z.string().min(1).optional(),
+    customsStatus: z.string().min(1).optional(),
+    location: z.string().min(1).optional(),
+    referenceNumber: z.string().min(1).optional(),
+    postedAtText: z.string().min(1).optional(),
+    phoneCollectionStatus: phoneCollectionStatusSchema,
+    sellerPhoneNumbers: sellerPhoneNumbersSchema,
+  })
+  .strict()
+  .superRefine(({ phoneCollectionStatus, sellerPhoneNumbers }, context) => {
+    const hasNumbers = sellerPhoneNumbers.length > 0;
+    if ((phoneCollectionStatus === "observed") !== hasNumbers) {
+      context.addIssue({
+        code: "custom",
+        message: "Phone collection status and phone numbers are inconsistent.",
+        path: ["phoneCollectionStatus"],
+      });
+    }
+
+    const uniqueDigits = new Set(
+      sellerPhoneNumbers.map((phoneNumber) => phoneNumber.digits),
+    );
+    if (uniqueDigits.size !== sellerPhoneNumbers.length) {
+      context.addIssue({
+        code: "custom",
+        message: "Seller phone numbers must be unique by digits.",
+        path: ["sellerPhoneNumbers"],
+      });
+    }
+  });
+
+export type PhoneCollectionStatus = z.infer<typeof phoneCollectionStatusSchema>;
+export type SellerPhoneNumber = z.infer<typeof sellerPhoneNumberSchema>;
+export type AutoGeListingObservation = z.infer<
+  typeof autoGeListingObservationSchema
+>;
 
 const LISTING_ID_PATTERN = /-(?<listingId>[0-9]+)\.html$/;
 
@@ -69,8 +147,9 @@ export function parseAutoGeListingText(
   const location = valueAfterLabel(text, "Location");
   const referenceNumber = valueAfterLabel(text, "Reference Number");
   const postedAtText = valueAfterLabel(text, "Posted");
+  const phoneObservation = parseSellerPhoneNumbers(text);
 
-  return {
+  return autoGeListingObservationSchema.parse({
     listingId,
     url,
     make,
@@ -85,7 +164,113 @@ export function parseAutoGeListingText(
     ...(location === undefined ? {} : { location }),
     ...(referenceNumber === undefined ? {} : { referenceNumber }),
     ...(postedAtText === undefined ? {} : { postedAtText }),
+    ...phoneObservation,
+  });
+}
+
+const PHONE_LABEL_PATTERN =
+  /^(?:m\.?\s*phone|phone(?: number)?|telephone)(?:\s*:\s*(.*))?$/i;
+const PHONE_SEPARATOR_PATTERN = /\s*(?:,|;|\||\/)\s*/;
+
+function parseSellerPhoneNumbers(text: string): {
+  readonly phoneCollectionStatus: PhoneCollectionStatus;
+  readonly sellerPhoneNumbers: SellerPhoneNumber[];
+} {
+  const lines = text.split(/\r?\n/);
+  const displayValues: string[] = [];
+  let foundPhoneLabel = false;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]?.trim() ?? "";
+    const labelMatch = PHONE_LABEL_PATTERN.exec(line);
+    if (labelMatch === null) {
+      continue;
+    }
+
+    foundPhoneLabel = true;
+    const inlineValue = labelMatch[1]?.trim();
+    if (inlineValue !== undefined && inlineValue !== "") {
+      displayValues.push(...splitPhoneDisplayValues(inlineValue));
+      continue;
+    }
+
+    for (
+      let valueIndex = index + 1;
+      valueIndex < lines.length;
+      valueIndex += 1
+    ) {
+      const candidate = lines[valueIndex]?.trim() ?? "";
+      if (candidate === "") {
+        continue;
+      }
+      const candidateValues = splitPhoneDisplayValues(candidate);
+      if (candidateValues.length === 0) {
+        break;
+      }
+      displayValues.push(...candidateValues);
+    }
+  }
+
+  const sellerPhoneNumbers = normalizePhoneDisplayValues(displayValues);
+  return {
+    phoneCollectionStatus:
+      sellerPhoneNumbers.length > 0
+        ? "observed"
+        : foundPhoneLabel
+          ? "not_available"
+          : "not_checked",
+    sellerPhoneNumbers,
   };
+}
+
+function splitPhoneDisplayValues(value: string): string[] {
+  return value
+    .split(PHONE_SEPARATOR_PATTERN)
+    .map((part) => part.trim())
+    .filter(isPhoneDisplayValue);
+}
+
+function isPhoneDisplayValue(value: string): boolean {
+  const digits = digitsOnly(value);
+  return (
+    PHONE_DISPLAY_PATTERN.test(value) &&
+    digits.length >= 3 &&
+    digits.length <= 15
+  );
+}
+
+function normalizePhoneDisplayValues(
+  displayValues: readonly string[],
+): SellerPhoneNumber[] {
+  const uniqueByDigits = new Map<string, SellerPhoneNumber>();
+  for (const displayText of displayValues) {
+    const digits = digitsOnly(displayText);
+    if (uniqueByDigits.has(digits)) {
+      continue;
+    }
+
+    const e164 = toGeorgianMobileE164(digits);
+    uniqueByDigits.set(digits, {
+      displayText,
+      digits,
+      ...(e164 === undefined ? {} : { e164 }),
+    });
+  }
+  return [...uniqueByDigits.values()];
+}
+
+function digitsOnly(value: string): string {
+  return value.replaceAll(/[^0-9]/g, "");
+}
+
+function toGeorgianMobileE164(digits: string): string | undefined {
+  if (/^5[0-9]{8}$/.test(digits)) {
+    return `+995${digits}`;
+  }
+  if (/^9955[0-9]{8}$/.test(digits)) {
+    return `+${digits}`;
+  }
+  return undefined;
 }
 
 function firstMeaningfulLine(text: string): string {

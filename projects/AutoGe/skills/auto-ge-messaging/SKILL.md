@@ -8,6 +8,31 @@ description: Read Auto.ge message history and send a single verified reply throu
 Use Chrome browser control and its Playwright API. Keep authentication inside the
 browser; never inspect, copy, log, or export cookies or browser storage.
 
+## Authentication and Playwright-first operation
+
+Use the browser connection only to attach to the user's persistent Chrome session.
+Perform normal navigation, DOM inspection, form filling and clicks through the
+attached tab's Playwright API. Use visual or coordinate control only to discover a
+selector or recover when the Playwright surface cannot expose the required state.
+
+To check authentication, open `https://www.auto.ge/en/my-messages.html`, wait for
+`domcontentloaded`, and take a fresh DOM snapshot. An authenticated page contains
+the conversation table; a logged-out page contains the labelled `Email` and
+`Password` textboxes and `Sign in` button. When logged out:
+
+1. leave the sign-in page open for the user to complete manually in Chrome;
+2. never read the fields' values or inspect password-manager, cookie, storage or
+   session state;
+3. after the user reports completion, claim the same visible Chrome tab and take
+   a fresh snapshot;
+4. continue only when the conversation table is visible; if the sign-in form is
+   still visible, record authentication as blocked and request another manual
+   login later.
+
+This procedure records selectors and verification state only. It intentionally
+does not make unattended login possible without an approved secret-management
+mechanism.
+
 ## Read conversations
 
 1. Open `https://www.auto.ge/en/my-messages.html`.

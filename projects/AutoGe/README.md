@@ -9,6 +9,8 @@ Research and qualification tooling for used vehicles listed at
 - strict domain-event validation;
 - content-addressed local artifact storage under ignored `data/`;
 - defensive parsing of auto.ge listing text;
+- default seller-phone capture with explicit collection status and conservative
+  Georgian mobile normalization;
 - Supabase schema for immutable events, artifacts, facts, criteria, evaluations,
   and rebuildable listing projections;
 - server-side Supabase event importer;
@@ -38,6 +40,27 @@ The recurring run is read-only: it checks messages, translates replies, refreshe
 the shortlist, produces an English report, proposes seller-language follow-ups
 with English translations and sources live candidates. Sending requires a separate
 approval of the exact original-language text and destination.
+
+## Canonical offer registry
+
+[`OFFER-REGISTRY.md`](OFFER-REGISTRY.md) is the canonical human-readable source
+that consolidates every analyzed offer. It is a committed projection, not an
+independently edited evidence store: ignored append-only event batches under
+`data/` own the structured observations and decisions.
+
+Before delivering any shortlist, sourcing or operator report:
+
+1. archive structured append-only event records for every analyzed listing,
+   including rejected and incomplete offers;
+2. run `npm run registry:generate`;
+3. run `npm run registry:check` and resolve every omission or stale projection.
+
+The check compares direct Auto.ge listing links in narrative reports with the
+registry, so an offer cannot silently remain report-only. In a clean checkout,
+ignored local event batches are intentionally absent; `registry:check` then
+validates narrative coverage against the committed registry. Generation requires
+the local event evidence. When event batches are present, the check also replays
+them and requires the committed registry to match exactly.
 
 ## Local commands
 
@@ -79,3 +102,16 @@ for later migration.
 - `data/`: raw or sanitized HTML, JSON, media, PDFs, and local event batches.
 - Git: code, migrations, tests, criteria documentation, and synthesized research
   reports without credentials or copied personal data.
+
+## Listing discovery phone contract
+
+New `listing_discovered` events use schema version 2 and always include
+`phoneCollectionStatus` plus `sellerPhoneNumbers` in their payload. The status is
+`observed`, `not_available`, or `not_checked`; the phone-number array is present
+even when empty. Each observed item preserves `displayText`, stores a digits-only
+comparison key, and includes `e164` only when the displayed digits clearly match a
+Georgian mobile number. Discovery deduplicates items by the digits-only key.
+
+Store public listing phone observations in the append-only event payload and the
+Supabase listing projection. Do not copy actual seller phone values into
+Git-tracked reports, fixtures, docs, logs, prompts, or Google Sheets.

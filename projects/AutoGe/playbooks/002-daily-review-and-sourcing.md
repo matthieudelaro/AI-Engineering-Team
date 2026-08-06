@@ -38,12 +38,30 @@ and discover additional Auto.ge candidates. Write the report entirely in English
      Honda Odyssey;
    - reliable, liquid small cars when larger vehicles are poor value.
 8. Open every proposed listing directly and verify that it is active. Record price,
-   year, mileage, customs status, drivetrain, location and critical unknowns.
-9. Deduplicate by canonical listing ID. Never infer dimensions from model name or
-   roof appearance alone.
-10. Produce a timestamped report from `REPORT-TEMPLATE.md` and archive sanitized
-    events locally. Do not include cookies, session data, user identity or private
+   year, mileage, customs status, drivetrain, location, publicly displayed seller
+   phone numbers and critical unknowns. Phone collection is required for every
+   discovery event: record `observed`, `not_available`, or `not_checked`, preserve
+   each exact display value, deduplicate by digits, and infer `+995` E.164 only for
+   an unambiguous Georgian mobile pattern. Store actual phone values only in the
+   event/projection store or ignored artifacts, never in Git-tracked reports.
+9. Reject vehicles physically abroad, in transit or awaiting shipment. For a
+   vehicle already in Georgia but not customs-cleared, use current official
+   Georgian rates to estimate excise, import duty and known administrative fees;
+   show both the estimate assumptions and customs-inclusive total price.
+10. Deduplicate by canonical listing ID. Never infer dimensions from model name or
+    roof appearance alone.
+11. Draft the timestamped report from `REPORT-TEMPLATE.md`, then archive sanitized
+    append-only structured events for every analyzed listing, including retained,
+    rejected and incomplete vehicles. Include enough structured evidence to
+    project its listing ID, URL where known, disposition, contact state and source
+    evidence. Do not include cookies, session data, user identity or private
     contact details.
+12. Run `npm run registry:generate`. This rebuilds the canonical
+    `OFFER-REGISTRY.md` projection from all local structured event batches.
+13. Run `npm run registry:check`. If a narrative listing is absent, an audit field
+    is incomplete, or the generated projection is stale, fix the event batch and
+    repeat steps 12–13. Do not deliver the report while this check fails.
+14. Deliver the report only after the registry check passes.
 
 ## Message approval boundary
 
@@ -61,4 +79,7 @@ history reads.
   links side by side;
 - affected rankings are explained;
 - new candidates are live, deduplicated and evidence-qualified;
+- every analyzed listing has an append-only structured event and appears in the
+  generated `OFFER-REGISTRY.md` with its audit fields;
+- `npm run registry:check` passes after the final report draft;
 - the report clearly lists the decisions awaiting the user.

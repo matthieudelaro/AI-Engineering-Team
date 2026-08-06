@@ -31,12 +31,14 @@ identity fields only, not history or condition.
 
 ## Newly sourced vehicles
 
-| Provisional rank | Vehicle | Price | Why it may fit | Primary risks | Evidence confidence | Listing |
-| ---------------: | ------- | ----: | -------------- | ------------- | ------------------- | ------- |
+| Provisional rank | Vehicle | Advertised price | Estimated customs | Estimated total | Why it may fit | Primary risks | Evidence confidence | Listing |
+| ---------------: | ------- | ---------------: | ----------------: | --------------: | -------------- | ------------- | ------------------- | ------- |
 
 Include only active Auto.ge listing pages checked during this run. Explain why
 each candidate is better than, complementary to, or riskier than the current
-shortlist.
+shortlist. Put vehicles abroad or awaiting shipment in rejected vehicles rather
+than this table. For a vehicle in Georgia that is not customs-cleared, show the
+official-rate assumptions behind the customs estimate.
 
 ## Decisions requested from the user
 
