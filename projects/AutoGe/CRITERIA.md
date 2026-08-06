@@ -3,7 +3,9 @@
 ## Ranked strategies
 
 1. A van with at least 2,000 mm of usable sleeping length and preferably at
-   least 1,900 mm of finished interior height.
+   least 1,900 mm of finished interior height. Volkswagen Crafter is now an
+   explicit sourcing target in this strategy; roof height and usable cargo
+   dimensions still require listing-specific evidence.
 2. A sleepable all-wheel-drive van or minivan, initially represented by the
    Mitsubishi Delica family.
 3. A spacious road-oriented minivan, initially including Toyota Voxy, Nissan
