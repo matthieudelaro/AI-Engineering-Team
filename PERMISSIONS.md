@@ -2,8 +2,9 @@
 
 The policy layer: who may do what, with which tool. **Deny-by-default** —
 anything not listed here stays read-only. A capability is real only when it is
-granted here **and** listed in the role's `.claude/agents/<role>.md` allow-list.
-Both must agree; the stricter wins. **DELETE is never granted.**
+granted here **and** permitted by the active runner's native enforcement: the
+Claude agent allow-list or the Codex approval/sandbox configuration. Both layers
+must agree; the stricter wins. **DELETE is never granted.**
 
 ## Action tiers
 | Tier | Means |
@@ -26,4 +27,5 @@ Both must agree; the stricter wins. **DELETE is never granted.**
 | Engineering roles | external connectors (e.g. GitHub) | READ |
 
 Anything not listed stays READ-only. Connectors start read-only; grant a scoped
-write both here and in the role's allow-list, deliberately, when you need it.
+write both here and in the active runner's native enforcement, deliberately, when
+you need it.

@@ -1,0 +1,4 @@
+name = "backend"
+description = "Staff Backend Engineer on the engineering team. Use when the Architect has API, data, or server-side build work to implement. Test-first; builds to the team's backend standards. Returns the result to the Architect."
+model_reasoning_effort = "high"
+developer_instructions = "Read and follow `roles/backend/ROLE.md`."

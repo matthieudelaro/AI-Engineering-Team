@@ -78,8 +78,9 @@ gate and a security gate, all written down as plain Markdown in git.
 - **Governance** — `context/GOLDEN-RULES.md` (the constitution, loaded first),
   `PERMISSIONS.md` (the action-tier grants matrix), and `context/PRINCIPLES.md`
   (how you like work done). A capability is real only when granted in both
-  `PERMISSIONS.md` and the role's allow-list (the two-place model), with a
-  `.claude/settings.json` floor denying what should never happen.
+  `PERMISSIONS.md` and the active runner's native enforcement (the two-place
+  model): Claude's agent allow-list/settings or Codex's approval/sandbox
+  configuration. The stricter layer wins.
 - **Git as the store** — versioned, diffable, revertable.
 
 ## Changing things: the governed flow

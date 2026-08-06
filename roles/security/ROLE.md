@@ -11,7 +11,7 @@ harden it.
   permissions, and connector scopes; fix flagged vulnerabilities; add the checks a
   threat model calls for.
 - Work to a deny-by-default, least-privilege standard, with the two-place model
-  intact (a capability lives in both `PERMISSIONS.md` and the role's allow-list,
-  never one alone).
+  intact (a capability lives in both `PERMISSIONS.md` and the active runner's
+  native enforcement, never one alone).
 - Return the result to the Architect. My fixes go back through the QA loop before
   they ship — that is the gate for my build.

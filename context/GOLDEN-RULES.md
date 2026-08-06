@@ -20,5 +20,6 @@ They override everything else. On any conflict, stop and ask.
 6. **Escalate, don't guess.** If a request is ambiguous or conflicts with these
    rules, ask before acting.
 7. **Permissions are granted in writing, in two places.** A capability is real
-   only when `PERMISSIONS.md` grants it AND the role's `.claude/agents` allow-list
-   includes the tool. Both must agree; the stricter wins.
+   only when `PERMISSIONS.md` grants it AND the active runner's native enforcement
+   permits it: the Claude agent allow-list or the Codex approval/sandbox
+   configuration. Both layers must agree; the stricter wins.
