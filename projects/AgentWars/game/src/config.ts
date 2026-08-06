@@ -11,7 +11,7 @@ loadEnv({ path: resolve(repoRoot, ".env") });
 
 const envSchema = z.object({
   PLAYER_ID: z.string().min(1).default("remotematthieu999"),
-  GAME_ID: z.string().min(1).default("w8pp"),
+  GAME_ID: z.string().min(1).default("qd4w"),
   GAME_API_URL: z.string().url(),
   GAME_API_TOKEN: z.string().default("your-token-here"),
   GAME_API_AUTH_HEADER: z.string().default("Authorization"),

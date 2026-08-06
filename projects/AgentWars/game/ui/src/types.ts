@@ -32,9 +32,18 @@ export interface LeaderboardResponse {
   tick: number;
 }
 
+export interface NukeAcceptedEffect {
+  cost_charged?: number;
+  effective_radius_tiles?: number;
+}
+
 export interface ActionResponse {
-  accepted?: { action_id: string };
-  rejected?: { reason: string; retry_after?: number };
+  accepted?: { action_id: string; effect?: NukeAcceptedEffect };
+  rejected?: {
+    reason: string;
+    retry_after?: number;
+    insufficient_points?: { cost?: number; available?: number };
+  };
 }
 
 export interface FlagInfo {

@@ -1,0 +1,59 @@
+{
+  "fetched_at": "2026-08-01T20:09:01.830011+00:00",
+  "server": "http://aw.oakzone.eu:51245",
+  "game_id": "qd4w",
+  "endpoint": "GET /api/v1/method-limits?game_id=qd4w",
+  "http_status": 200,
+  "response": {
+    "place_tile": {
+      "max_per_sec": 20
+    },
+    "launch_nuke": {
+      "cooldown": 30,
+      "max_active_per_player": 1,
+      "max_per_sec": 1,
+      "explosion_model": {
+        "base_radius_tiles": 5,
+        "distance_decay": 0.15,
+        "max_radius_tiles": 4,
+        "min_radius_tiles": 1
+      },
+      "cost_model": {
+        "cost_per_tile": 1
+      }
+    },
+    "request_scan": {
+      "cooldown": 30,
+      "max_active_per_player": 1,
+      "max_per_sec": 1,
+      "max_map_coverage_fraction": 0.04,
+      "max_area_tiles": 121,
+      "max_side_length": 11,
+      "duration_model": {
+        "base_tile_seconds": 150,
+        "min_duration": 3,
+        "max_duration": 10
+      },
+      "cost_model": {
+        "coefficient": 0.5
+      }
+    },
+    "set_emotion": {
+      "max_per_sec": 2,
+      "cooldown": 5
+    },
+    "get_map": {
+      "max_per_sec": 1
+    },
+    "get_flags": {
+      "max_per_sec": 20
+    },
+    "get_stats": {
+      "max_per_sec": 1
+    },
+    "get_leaderboard": {
+      "max_per_sec": 1
+    },
+    "fog_of_war_padding_tiles": 3
+  }
+}

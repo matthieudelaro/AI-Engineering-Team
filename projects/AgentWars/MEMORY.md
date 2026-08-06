@@ -5,7 +5,7 @@ this project (`projects/AgentWars/`). Do not put these notes in the team root
 `MEMORY.md`.
 
 ## In flight
-- Game `w8pp` / player `remotematthieu999` — stack connected; empty board, waiting for place-tile accepts.
+- _(none)_ — game `qd4w` ended; local stack stopped (gateway/pollers/jobs/UI). Postgres left up with history.
 
 ## Learned
 - Place-tile ~12 RPS plateau (API cap 20) was client limiter duty cycle, not RTT: `noteRemaining(≤3)` collapsed the wall-second cap mid-second; soft-resume was 8/400. Fix: only pause on `remaining≤0` when near cap (ignore stale 0s); pace `placeRps-1` with soft-resume 16/200. Do not locally expand fog bounds beyond the snapshot (causes 100% `OUT_OF_BOUNDS`); on OOB tighten local bounds via `excludeOutOfBoundsCell`.
@@ -17,3 +17,5 @@ this project (`projects/AgentWars/`). Do not put these notes in the team root
 - Fog hides map `has_flag`; show flags from gateway-cached GetFlags (`fetchFlags` → `game_states` `flags`) merged into paint coords via `flagOverlay`.
 - Owned-flag nuke job (`game/src/jobs/nukeOwnedFlags.ts`) starts with `npm run jobs` / `npm start`: nukes flags on our tiles using cached map+flags; spend cap **100 pts / rolling 3 min** (`NUKE_RATE_LIMIT` / `NUKE_RATE_WINDOW_MS`). GetFlags has `nuked` but not owner — join with map `ownership.owned`.
 - Gateway UI claim queue (`game/src/gateway/uiClaimQueue.ts`): `GET /_gateway/ui-claim-queue` returns `getUiClaimQueueStats()` (pending/inFlight/total/pendingRetries + fifo `head` preview, max 10). `DELETE /_gateway/ui-claim-queue` calls `clearUiClaimQueue()` (204). Tests use `resetUiClaimQueue()` — same implementation as clear.
+- UI **N+click** launches a nuke at the tile (`launchNuke` → `POST /api/v1/launch-nuke` with `{ game_id, target_x, target_y }` only — no size field; server min radius 1). Skips paint; status via `formatNukeStatus`. Own tiles are allowed (same as `nukeOwnedFlags`). API often returns **HTTP 409** with `{ rejected }` (cooldown/capacity) — `launchNuke` must `acceptRejectedBody` or the UI shows bare "Conflict".
+- Nuke HUD: top-right `#nuke-toast` polls `GET /_gateway/recent-nukes` (from `api_calls`) so **job + UI** accepts show “Nuke sent” + 30s cooldown countdown. Restart gateway after pulling that route.
