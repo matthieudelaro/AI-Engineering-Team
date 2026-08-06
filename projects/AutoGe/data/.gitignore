@@ -1,0 +1,4 @@
+# Runtime artifacts, downloads, browser state, and content-addressed objects.
+# Keep this directory local and never commit its contents.
+*
+!.gitignore

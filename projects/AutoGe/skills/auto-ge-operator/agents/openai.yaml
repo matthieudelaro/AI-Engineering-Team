@@ -1,0 +1,4 @@
+interface:
+  display_name: "Auto.ge Operator"
+  short_description: "Review inbox, report, and source Auto.ge cars"
+  default_prompt: "Use $auto-ge-operator to review Auto.ge messages, produce an English report with seller-language drafts and English translations, and source new candidates without sending unapproved messages."

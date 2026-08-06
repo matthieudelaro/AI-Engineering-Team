@@ -1,0 +1,4 @@
+interface:
+  display_name: "Auto.ge Messaging"
+  short_description: "Safely read and send Auto.ge messages"
+  default_prompt: "Use $auto-ge-messaging to read an Auto.ge conversation or send one verified reply without duplicates."

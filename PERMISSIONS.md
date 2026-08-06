@@ -25,6 +25,7 @@ must agree; the stricter wins. **DELETE is never granted.**
 | Security | this repo's files | READ, EDIT, CREATE |
 | QA | everything | READ only |
 | Engineering roles | external connectors (e.g. GitHub) | READ |
+| Architect | auto.ge seller messaging | CREATE — limited to exact messages and destinations explicitly approved by the user in the active task; no autonomous retries or channel changes |
 
 Anything not listed stays READ-only. Connectors start read-only; grant a scoped
 write both here and in the active runner's native enforcement, deliberately, when
