@@ -6,8 +6,9 @@ export interface Point {
 /** Manhattan-radius for ~25 cells (|dx| + |dy| <= radius). */
 export const SHIFT_CLAIM_DIAMOND_RADIUS = 3;
 
-/** Brush radii: Shift < A < S < D, each step doubles the previous. */
+/** Brush radii: Z < Shift < A < S < D; A/S/D each step doubles the previous. */
 export const BRUSH_RADIUS_SHIFT = SHIFT_CLAIM_DIAMOND_RADIUS;
+export const BRUSH_RADIUS_Z = Math.floor(BRUSH_RADIUS_SHIFT / 3);
 export const BRUSH_RADIUS_A = BRUSH_RADIUS_SHIFT * 2;
 export const BRUSH_RADIUS_S = BRUSH_RADIUS_A * 2;
 export const BRUSH_RADIUS_D = BRUSH_RADIUS_S * 2;
@@ -25,10 +26,11 @@ export interface BrushModifiers {
   d: boolean;
   /** F-key edge lasso; when true, overrides diamond brushes. */
   f: boolean;
+  z: boolean;
 }
 
 /**
- * Brush Manhattan radius from modifiers. D > S > A > Shift; none → 0 (single cell).
+ * Brush Manhattan radius from modifiers. D > S > A > Shift > Z; none → 0 (single cell).
  * Callers should check `mods.f` first and use `lassoEdgeCells` instead of a diamond.
  */
 export function brushRadiusFromModifiers(mods: BrushModifiers): number {
@@ -43,6 +45,9 @@ export function brushRadiusFromModifiers(mods: BrushModifiers): number {
   }
   if (mods.shift) {
     return BRUSH_RADIUS_SHIFT;
+  }
+  if (mods.z) {
+    return BRUSH_RADIUS_Z;
   }
   return 0;
 }

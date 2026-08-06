@@ -411,6 +411,39 @@ body {
   font-size: var(--text-foot);
 }
 
+.nuke-toast {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  width: min(360px, calc(100vw - 2rem));
+  padding: 1.1rem 1.25rem;
+  border-radius: 10px;
+  border: 1px solid #2a3648;
+  background: #101820ee;
+  backdrop-filter: blur(6px);
+  box-shadow: 0 8px 24px #00000066;
+  z-index: 20;
+  font-size: var(--text-panel);
+  line-height: 1.4;
+}
+
+.nuke-toast-error {
+  border-color: #8b4040;
+}
+
+.nuke-toast-message {
+  font-size: var(--text-heading);
+  font-weight: 600;
+  color: #c5d4e8;
+  margin-bottom: 0.45rem;
+}
+
+.nuke-toast-cooldown {
+  font-size: var(--text-title);
+  color: #7ec8a8;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
 .claim-queue-panel {
   position: fixed;
   left: 1rem;

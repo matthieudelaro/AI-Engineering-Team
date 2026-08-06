@@ -4,6 +4,7 @@ import {
   BRUSH_RADIUS_D,
   BRUSH_RADIUS_S,
   BRUSH_RADIUS_SHIFT,
+  BRUSH_RADIUS_Z,
   brushRadiusFromModifiers,
   diamondCells,
   LASSO_HALF_EXTENT,
@@ -21,6 +22,7 @@ function mods(partial: Partial<BrushModifiers> = {}): BrushModifiers {
     s: false,
     d: false,
     f: false,
+    z: false,
     ...partial,
   };
 }
@@ -127,6 +129,25 @@ describe("brushRadiusFromModifiers", () => {
     expect(brushRadiusFromModifiers(mods({ shift: true, a: true, s: true, d: true }))).toBe(
       BRUSH_RADIUS_D,
     );
+  });
+
+  it("Z radius is one third of Shift", () => {
+    expect(BRUSH_RADIUS_Z).toBe(BRUSH_RADIUS_SHIFT / 3);
+    expect(BRUSH_RADIUS_Z).toBe(1);
+  });
+
+  it("Z alone yields the small brush", () => {
+    expect(brushRadiusFromModifiers(mods({ z: true }))).toBe(BRUSH_RADIUS_Z);
+  });
+
+  it("Shift+Z yields Shift (larger brush wins)", () => {
+    expect(brushRadiusFromModifiers(mods({ shift: true, z: true }))).toBe(BRUSH_RADIUS_SHIFT);
+  });
+
+  it("A/S/D still win over Z", () => {
+    expect(brushRadiusFromModifiers(mods({ z: true, a: true }))).toBe(BRUSH_RADIUS_A);
+    expect(brushRadiusFromModifiers(mods({ z: true, s: true }))).toBe(BRUSH_RADIUS_S);
+    expect(brushRadiusFromModifiers(mods({ z: true, d: true }))).toBe(BRUSH_RADIUS_D);
   });
 });
 

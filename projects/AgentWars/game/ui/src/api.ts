@@ -2,6 +2,7 @@ import { logApiCall } from "./apiConsole.js";
 import { GATEWAY_BASE_URL, GAME_ID } from "./config.js";
 import { parseRateLimitHeaders, type RateBudget } from "./rateBudget.js";
 import type {
+  ActionResponse,
   FlagsResponse,
   LeaderboardResponse,
   MapResponse,
@@ -11,6 +12,27 @@ import { mapColorForPlayer } from "./playerColors.js";
 import { formatCacheAge } from "./cacheAge.js";
 
 export { formatCacheAge } from "./cacheAge.js";
+
+function hasRejectedAction(body: unknown): body is ActionResponse {
+  return (
+    typeof body === "object" &&
+    body !== null &&
+    "rejected" in body &&
+    typeof (body as ActionResponse).rejected?.reason === "string"
+  );
+}
+
+function actionErrorDetail(body: unknown, statusText: string): string {
+  if (typeof body === "object" && body !== null) {
+    if ("details" in body && typeof (body as { details: unknown }).details === "string") {
+      return (body as { details: string }).details;
+    }
+    if ("error" in body && typeof (body as { error: unknown }).error === "string") {
+      return (body as { error: string }).error;
+    }
+  }
+  return statusText;
+}
 
 function isApiErrorPayload(payload: unknown): boolean {
   return (
@@ -186,7 +208,15 @@ async function fetchGameJson<T>(path: string): Promise<T> {
   return body as T;
 }
 
-async function postGameAction<T>(path: string, init?: RequestInit): Promise<T> {
+interface PostGameActionOptions {
+  acceptRejectedBody?: boolean;
+}
+
+async function postGameAction<T>(
+  path: string,
+  init?: RequestInit,
+  options?: PostGameActionOptions,
+): Promise<T> {
   const method = init?.method ?? "GET";
   let response: Response;
   let body: unknown = null;
@@ -224,10 +254,17 @@ async function postGameAction<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   if (!response.ok) {
-    const detail =
-      typeof body === "object" && body !== null && "details" in body
-        ? String((body as { details: string }).details)
-        : response.statusText;
+    if (options?.acceptRejectedBody && hasRejectedAction(body)) {
+      logApiCall({
+        method,
+        path: `/api/v1${path} (game API)`,
+        status: response.status,
+        ok: false,
+        body,
+      });
+      return body as T;
+    }
+    const detail = actionErrorDetail(body, response.statusText);
     logApiCall({
       method,
       path: `/api/v1${path} (game API)`,
@@ -356,6 +393,24 @@ export function fetchFlags(): Promise<{ data: FlagsResponse; meta: CachedReadMet
     assertUsableFlags(result.data);
     return result;
   });
+}
+
+export async function launchNuke(
+  targetX: number,
+  targetY: number,
+): Promise<ActionResponse> {
+  return postGameAction<ActionResponse>(
+    "/launch-nuke",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        game_id: GAME_ID,
+        target_x: targetX,
+        target_y: targetY,
+      }),
+    },
+    { acceptRejectedBody: true },
+  );
 }
 
 export function ownershipName(

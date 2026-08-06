@@ -6,6 +6,7 @@ import type { Env } from "../config.js";
 import type { ApiEndpointsConfig } from "../config.js";
 import { createDb, type Database } from "../db/index.js";
 import { apiCalls } from "../db/schema.js";
+import { buildRecentNukesResponse } from "./recentNukes.js";
 import { buildRateStatsResponse, endpointLabel, formatSourceBreakdown, PINNED_ENDPOINT_DEFAULTS, PINNED_ENDPOINT_KEYS } from "./rateStats.js";
 import { listCachedGameStates, readCachedGameState } from "./stateCache.js";
 import { redactHeaders, truncateBody } from "./redact.js";
@@ -118,6 +119,11 @@ export async function createGatewayServer(
         errorCalls: row?.errors ?? 0,
       },
     };
+  });
+
+  app.get("/_gateway/recent-nukes", async (request) => {
+    const query = request.query as { since_id?: string; limit?: string };
+    return buildRecentNukesResponse(db, query);
   });
 
   app.get("/_gateway/rate-stats", async (request) => {

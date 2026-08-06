@@ -3,6 +3,7 @@ import {
   bindRateBudget,
   enqueueUiClaims,
   fetchFlags,
+  launchNuke,
   fetchLeaderboard,
   fetchMapLive,
   fetchMapResolved,
@@ -34,6 +35,8 @@ import {
   lineCells,
   type BrushModifiers,
 } from "./claimDiamond.js";
+import { formatNukeStatus } from "./nukeAction.js";
+import { initNukeToast } from "./nukeToast.js";
 import { UiClaimBatcher } from "./uiClaimBatch.js";
 import { PLAYER_ID } from "./config.js";
 import { UI_FEATURES } from "./features.js";
@@ -59,6 +62,7 @@ const leaderboardEl = document.getElementById("leaderboard");
 const apiConsoleEl = document.getElementById("api-console");
 const ratePanelEl = document.getElementById("rate-panel");
 const claimQueuePanelEl = document.getElementById("claim-queue-panel");
+const nukeToastEl = document.getElementById("nuke-toast");
 
 if (
   !statsEl ||
@@ -141,7 +145,7 @@ let painting = false;
 let paintPointerId: number | null = null;
 let lastPaintCell: { x: number; y: number } | null = null;
 let lastUiActivityTouch = 0;
-const heldBrushKeys = { a: false, s: false, d: false, f: false };
+const heldBrushKeys = { a: false, s: false, d: false, f: false, n: false, z: false };
 /** Cell under the pointer when not painting (for F-hover). */
 let hoverCell: { x: number; y: number } | null = null;
 /** Last cell stamped by F-hover so we do not re-stamp every move. */
@@ -177,6 +181,8 @@ if (claimQueuePanelEl) {
   }
 }
 
+const nukeToast = nukeToastEl ? initNukeToast(nukeToastEl) : null;
+
 function cellKey(x: number, y: number): string {
   return `${x},${y}`;
 }
@@ -191,6 +197,26 @@ function maybeTouchUiActivity(force = false): void {
 
 function setStatus(message: string): void {
   statusEl.textContent = message;
+}
+
+async function fireNukeAt(x: number, y: number): Promise<void> {
+  try {
+    const response = await launchNuke(x, y);
+    if (response.accepted) {
+      nukeToast?.notifyUiAccepted(x, y, response.accepted.effect);
+    } else if (response.rejected) {
+      const retryAfter = response.rejected.retry_after;
+      if (retryAfter !== undefined && retryAfter > 0) {
+        nukeToast?.notifyUiRejected(retryAfter);
+      }
+      setStatus(formatNukeStatus(x, y, response));
+    } else {
+      setStatus(formatNukeStatus(x, y, response));
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "nuke failed";
+    setStatus(message);
+  }
 }
 
 function updateStats(): void {
@@ -516,6 +542,7 @@ function brushModifiersFromEvent(event: PointerEvent | MouseEvent | KeyboardEven
     s: heldBrushKeys.s,
     d: heldBrushKeys.d,
     f: heldBrushKeys.f,
+    z: heldBrushKeys.z,
   };
 }
 
@@ -754,6 +781,10 @@ function setBrushKey(code: string, down: boolean): void {
     if (!down) {
       lastLassoHoverCell = null;
     }
+  } else if (code === "KeyN") {
+    heldBrushKeys.n = down;
+  } else if (code === "KeyZ") {
+    heldBrushKeys.z = down;
   }
 }
 
@@ -776,12 +807,21 @@ window.addEventListener("blur", () => {
   heldBrushKeys.s = false;
   heldBrushKeys.d = false;
   heldBrushKeys.f = false;
+  heldBrushKeys.n = false;
+  heldBrushKeys.z = false;
   lastLassoHoverCell = null;
   // keep hoverCell — pointer position is still valid when focus returns
 });
 
 boardEl.addEventListener("pointerdown", (event) => {
   if (event.button !== 0 || mapZoom.isPinching() || mapZoom.isPanning()) {
+    return;
+  }
+  if (heldBrushKeys.n) {
+    const pos = cellFromPointer(event);
+    if (pos) {
+      void fireNukeAt(pos.x, pos.y);
+    }
     return;
   }
   painting = true;
