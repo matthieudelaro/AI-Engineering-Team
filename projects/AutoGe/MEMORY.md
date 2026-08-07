@@ -6,6 +6,12 @@ listing and conversation state belongs in dated reports and the local event stor
 ## Durable facts
 
 - The target marketplace is `https://www.auto.ge/en/`.
+- The user is disabled and may need assistance completing Auto.ge sign-in. When
+  Chrome offers remembered credentials, the agent may use the browser's normal
+  autofill/password-manager UI to help sign in after the user requests the task,
+  without reading, copying, logging, or exposing credential values. If Chrome
+  requires fresh credentials, an OTP, CAPTCHA, or account-recovery decision,
+  pause for the user's input.
 - The authenticated Chrome session owns all credentials. Never copy cookies,
   session IDs, CAPTCHA state or browser storage into code, logs or prompts.
 - Auto.ge conversation history is the authoritative delivery check. A listing page
@@ -22,6 +28,10 @@ listing and conversation state belongs in dated reports and the local event stor
 - Read-only inbox checks, reports and listing research need no sending approval.
   Each outbound message needs approval of its exact original-language text and
   destination in the active task.
+- Before asking a seller for a VIN or accident-history detail, inspect the complete
+  original-resolution listing gallery, validate and cross-check any visible VIN,
+  and perform available exact-VIN and auction-history research. Record gallery
+  coverage and ask only for facts that remain unresolved.
 
 ## Storage
 

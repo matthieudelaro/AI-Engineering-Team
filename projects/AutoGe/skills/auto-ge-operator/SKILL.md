@@ -17,19 +17,23 @@ run. Use `REPORT-TEMPLATE.md` as the output contract.
 4. Extract evidence, contradictions and missing facts without conflating seller
    claims with verification.
 5. Recompute affected evaluations and explain every ranking change.
-6. Detect the seller's language and draft only the next useful reply in that
+6. Before drafting a VIN or history question, follow
+   `playbooks/003-vin-and-accident-history-enrichment.md`: inspect every available
+   original-resolution image, validate and cross-check visible VIN candidates,
+   and complete the available exact-VIN and auction-history enrichment.
+7. Detect the seller's language and draft only the next useful reply in that
    language (normally Georgian). Place the original-language draft, exact English
    translation, listing link and discussion link in adjacent table columns.
-7. Source and verify active Auto.ge listings that improve coverage of the user's
+8. Source and verify active Auto.ge listings that improve coverage of the user's
    vehicle strategies.
-8. Archive append-only structured events for every analyzed listing, including
+9. Archive append-only structured events for every analyzed listing, including
    retained, rejected and incomplete offers. A listing must never exist only in a
    narrative report.
-9. Run `npm run registry:generate` to rebuild `OFFER-REGISTRY.md` from all local
-   structured event batches.
-10. Run `npm run registry:check`. Resolve every missing narrative listing, missing
+10. Run `npm run registry:generate` to rebuild `OFFER-REGISTRY.md` from all local
+    structured event batches.
+11. Run `npm run registry:check`. Resolve every missing narrative listing, missing
     audit field or stale projection before proceeding.
-11. Only after the registry check passes, deliver the report and request explicit
+12. Only after the registry check passes, deliver the report and request explicit
     decisions.
 
 ## Reporting requirements
@@ -48,7 +52,10 @@ run. Use `REPORT-TEMPLATE.md` as the output contract.
 
 ## Sourcing rules
 
-Check each listing live and deduplicate by numeric listing ID. Prioritize functional
+Check each listing live and deduplicate across platforms by validated VIN first,
+then canonical listing ID and normalized public phone evidence. Treat the complete
+image gallery as source evidence: record whether every available original image
+was inspected and where a VIN candidate was found. Prioritize functional
 fit: sleeping length, standing height, Georgian-road capability, reliability,
 parts availability, total cost and resale liquidity. Never infer an unreported
 dimension, VIN history or mechanical condition. Archive useful raw artifacts under

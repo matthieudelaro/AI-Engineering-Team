@@ -20,9 +20,11 @@ questions that require further research.
 2. Discover and monitor relevant auto.ge listings.
 3. Preserve listing observations and source artifacts so later changes remain
    traceable.
-4. Identify missing facts and, once outbound messaging is explicitly enabled,
-   ask sellers for details such as availability, VIN, customs status, inspection
-   and test-drive availability in Tbilisi, and additional media.
+4. Identify missing facts only after inspecting the listing text and complete
+   original-resolution image gallery. Once outbound messaging is explicitly
+   enabled, ask sellers only for unresolved details such as availability, VIN,
+   customs status, inspection and test-drive availability in Tbilisi, and
+   additional media.
 5. Decode supplied VINs and compare the decoded identity with the listing and
    seller claims.
 6. Enrich candidates with vehicle-history, auction-history, customs, repair,
@@ -170,6 +172,13 @@ listing/account.
 
 ### VIN decoding
 
+Before requesting a VIN from a seller, inspect every available original-resolution
+listing image, including dashboard/software screens, windshield plates, labels and
+photographed documents. Record gallery coverage and preserve observation separately
+from OCR or interpretation. A candidate VIN must have 17 characters, exclude I, O
+and Q, pass its check digit where applicable, and be cross-checked against repeated
+images and the advertised vehicle identity.
+
 Use NHTSA vPIC's public `DecodeVinValuesExtended` JSON endpoint for a first-pass
 identity decode. Store the full raw response and a versioned normalized view.
 vPIC describes manufacturer-reported vehicle identity; it does not establish
@@ -179,6 +188,13 @@ history. Empty vPIC fields remain unknown.
 Compare the supplied VIN, VIN visible in media/documents, decoded make/model/year,
 and listing claims. Identity mismatches require rejection or human review; model
 aliases and market/generation differences must be normalized before deciding.
+
+For a validated VIN, search exact-VIN and primary auction sources before paid
+reports, recover historic auction photos where possible, and compare pre-repair
+and current images. Classify observed damage from cosmetic through heavy
+structural/safety risk, add vehicle-specific inspection items, and label conclusions
+as certain, probable, or not determinable remotely. Ask the seller only for the
+evidence still missing after this enrichment.
 
 ### Google Sheets output
 

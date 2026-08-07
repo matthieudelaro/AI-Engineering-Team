@@ -44,24 +44,30 @@ and discover additional Auto.ge candidates. Write the report entirely in English
    each exact display value, deduplicate by digits, and infer `+995` E.164 only for
    an unambiguous Georgian mobile pattern. Store actual phone values only in the
    event/projection store or ignored artifacts, never in Git-tracked reports.
-9. Reject vehicles physically abroad, in transit or awaiting shipment. For a
-   vehicle already in Georgia but not customs-cleared, use current official
-   Georgian rates to estimate excise, import duty and known administrative fees;
-   show both the estimate assumptions and customs-inclusive total price.
-10. Deduplicate by canonical listing ID. Never infer dimensions from model name or
-    roof appearance alone.
-11. Draft the timestamped report from `REPORT-TEMPLATE.md`, then archive sanitized
+9. Follow `playbooks/003-vin-and-accident-history-enrichment.md` before recording a
+   VIN or accident history as missing or drafting a seller request. Inspect the
+   complete original-resolution gallery, record gallery coverage, validate and
+   cross-check visible VIN candidates, then search exact-VIN and auction sources.
+   Ask the seller only for information that remains unresolved.
+10. Reject vehicles physically abroad, in transit or awaiting shipment. For a
+    vehicle already in Georgia but not customs-cleared, use current official
+    Georgian rates to estimate excise, import duty and known administrative fees;
+    show both the estimate assumptions and customs-inclusive total price.
+11. Deduplicate across platforms by validated VIN first, then canonical listing ID
+    and normalized public phone evidence. Never infer dimensions from model name
+    or roof appearance alone.
+12. Draft the timestamped report from `REPORT-TEMPLATE.md`, then archive sanitized
     append-only structured events for every analyzed listing, including retained,
     rejected and incomplete vehicles. Include enough structured evidence to
     project its listing ID, URL where known, disposition, contact state and source
     evidence. Do not include cookies, session data, user identity or private
     contact details.
-12. Run `npm run registry:generate`. This rebuilds the canonical
+13. Run `npm run registry:generate`. This rebuilds the canonical
     `OFFER-REGISTRY.md` projection from all local structured event batches.
-13. Run `npm run registry:check`. If a narrative listing is absent, an audit field
+14. Run `npm run registry:check`. If a narrative listing is absent, an audit field
     is incomplete, or the generated projection is stale, fix the event batch and
-    repeat steps 12–13. Do not deliver the report while this check fails.
-14. Deliver the report only after the registry check passes.
+    repeat steps 13–14. Do not deliver the report while this check fails.
+15. Deliver the report only after the registry check passes.
 
 ## Message approval boundary
 
@@ -79,6 +85,8 @@ history reads.
   links side by side;
 - affected rankings are explained;
 - new candidates are live, deduplicated and evidence-qualified;
+- every VIN/history question is preceded by documented full-gallery and
+  exact-VIN enrichment, with unresolved facts clearly separated;
 - every analyzed listing has an append-only structured event and appears in the
   generated `OFFER-REGISTRY.md` with its audit fields;
 - `npm run registry:check` passes after the final report draft;

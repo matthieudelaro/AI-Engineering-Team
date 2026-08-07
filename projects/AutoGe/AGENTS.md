@@ -7,7 +7,8 @@ Before working in this directory:
    latest shortlist/report.
 3. For the complete operating cycle, read
    `skills/auto-ge-operator/SKILL.md` and
-   `playbooks/002-daily-review-and-sourcing.md`.
+   `playbooks/002-daily-review-and-sourcing.md`. Before treating a VIN or accident
+   history as missing, follow `playbooks/003-vin-and-accident-history-enrichment.md`.
 4. For any Auto.ge message interaction, also read
    `skills/auto-ge-messaging/SKILL.md` and
    `playbooks/001-auto-ge-messaging-playwright.md`.

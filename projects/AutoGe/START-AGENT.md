@@ -9,8 +9,12 @@ Give a new agent this instruction from the repository root:
 > action report entirely in English. Draft each seller message only in the seller's
 > detected language (normally Georgian). For every proposed reply, show the
 > original-language message, English translation, listing link and discussion link
-> side by side. Do not send any message; wait for my approval of the exact text and
-> destination.
+> side by side. Before asking for a VIN or vehicle-history detail, follow
+> `playbooks/003-vin-and-accident-history-enrichment.md`: inspect the complete
+> original-resolution image gallery, validate any visible VIN, and perform the
+> available exact-VIN and auction-history research. Ask the seller only for facts
+> that remain unresolved. Do not send any message; wait for my approval of the
+> exact text and destination.
 
 If Chrome is logged out, the agent must stop and ask for a manual login. It must
 not substitute copied cookies or credentials.
